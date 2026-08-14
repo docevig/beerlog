@@ -46,18 +46,22 @@ const badge = computed(() => (icon.value ? `${icon.value}|${color.value}` : null
 
 const volumeHints = computed(() => volumes.value.map((v) => volumeHint(v)))
 
-/** Ключи CloudStorage — то, чем ограничено хранилище; предел 1024 */
 const storageLine = computed(
-  () =>
-    `${withPlural(entries.value.length, 'запись', 'записи', 'записей')} · ${props.keys} из 1024 ключей`,
+  () => `в дневнике ${withPlural(entries.value.length, 'запись', 'записи', 'записей')}`,
 )
 
+/**
+ * Техническая строка — для разбора жалоб, а не для чтения. Занятые ключи
+ * хранилища тоже здесь: предел в 1024 недостижим на любом мыслимом темпе,
+ * и выносить его в текст значит пугать цифрой, с которой нечего делать.
+ */
 const diagnostics = computed(() => {
   const app = tg()
   const parts = [`сборка ${__BUILD_ID__}`]
 
   if (app?.version) parts.push(`Telegram ${app.version}`)
   parts.push(`окно ${window.innerWidth}×${window.innerHeight}`)
+  parts.push(withPlural(props.keys, 'ключ', 'ключа', 'ключей'))
   if (!props.synced) parts.push('без облака')
 
   return parts.join(' · ')
