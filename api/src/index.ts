@@ -197,8 +197,25 @@ async function createInvite(ctx: Ctx): Promise<Response> {
   const body = (await ctx.request.json()) as { kind?: string; partyId?: string }
   const kind = body.kind === 'party' ? 'party' : 'friend'
 
-  if (kind === 'party' && !body.partyId) {
-    return json({ error: 'для приглашения в вечеринку нужен её идентификатор' }, 400)
+  if (kind === 'party') {
+    if (!body.partyId) {
+      return json({ error: 'для приглашения в вечеринку нужен её идентификатор' }, 400)
+    }
+
+    /*
+      Звать может любой за столом, но именно за столом: без этой проверки
+      пропуск на чужой вечер мог выписать кто угодно, зная идентификатор.
+    */
+    if (!(await isMember(ctx, body.partyId))) {
+      return json({ error: 'звать можно только на свой вечер' }, 403)
+    }
+
+    const party = await ctx.env.DB.prepare(`SELECT ended_at FROM parties WHERE id = ?`)
+      .bind(body.partyId)
+      .first<{ ended_at: number | null }>()
+
+    if (!party) return json({ error: 'вечеринка не найдена' }, 404)
+    if (party.ended_at !== null) return json({ error: 'вечер уже закрыт' }, 409)
   }
 
   // Код должен быть непредсказуемым: по нему открывается доступ к статистике
