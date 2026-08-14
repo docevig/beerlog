@@ -78,6 +78,46 @@ export function distinctStyles(entries: Entry[]): number {
   return new Set(entries.map((e) => e.style)).size
 }
 
+export interface PlaceStat {
+  place: string
+  times: number
+  ml: number
+}
+
+/** Где чаще всего пьёшь — по тем записям, где место указано */
+export function placeBreakdown(entries: Entry[]): PlaceStat[] {
+  const acc = new Map<string, PlaceStat>()
+
+  for (const e of entries) {
+    const place = e.place?.trim()
+    if (!place) continue
+
+    const key = place.toLowerCase()
+    const prev = acc.get(key) ?? { place, times: 0, ml: 0 }
+    acc.set(key, { place: prev.place, times: prev.times + 1, ml: prev.ml + e.ml })
+  }
+
+  return [...acc.values()].sort((a, b) => b.times - a.times)
+}
+
+/** Траты считаются только по записям с ценой — иначе итог занижен молча */
+export function spending(entries: Entry[]): { total: number; counted: number; skipped: number } {
+  let total = 0
+  let counted = 0
+  let skipped = 0
+
+  for (const e of entries) {
+    if (e.price && e.price > 0) {
+      total += e.price
+      counted += 1
+    } else {
+      skipped += 1
+    }
+  }
+
+  return { total, counted, skipped }
+}
+
 /** День с наибольшим объёмом */
 export function heaviestDay(entries: Entry[]): { day: string; ml: number } | undefined {
   let best: { day: string; ml: number } | undefined

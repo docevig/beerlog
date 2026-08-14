@@ -2,6 +2,8 @@
 import { ref, computed } from 'vue'
 import ChoiceGrid, { type Choice } from '../components/ChoiceGrid.vue'
 import DayGlass from '../components/DayGlass.vue'
+import BeerNameInput from '../components/BeerNameInput.vue'
+import { buildCatalog, type KnownBeer } from '../lib/catalog'
 import { BEER_STYLES, VOLUME_PRESETS, findStyle, styleTitle } from '../data/styles'
 import { styleColor, textOn, subTextOn } from '../lib/srm'
 import { formatAbv, formatPortion } from '../lib/format'
@@ -68,6 +70,17 @@ const allStyleOptions = computed<Choice[]>(() => BEER_STYLES.map((s) => toChoice
 
 /** Что уже выпито сегодня — контекст, который помогает решить, наливать ли ещё */
 const todayEntries = computed(() => entries.value.filter((e) => dayKey(e.ts) === todayKey()))
+
+/** Справочник собственных сортов — источник подсказок при вводе названия */
+const catalog = computed(() => buildCatalog(entries.value))
+
+/** Выбрали знакомый сорт: подставляем всё, что о нём известно */
+function applyKnown(beer: KnownBeer) {
+  style.value = beer.style
+  customMl.value = undefined
+  ml.value = beer.ml
+  if (beer.brewery) brewery.value = beer.brewery
+}
 
 /** Перелив за день: им же питается пена, доливающаяся на кнопку повтора */
 const spill = computed(() => overflowRatio(todayEntries.value.reduce((sum, e) => sum + e.ml, 0)))
@@ -211,7 +224,7 @@ async function save() {
     </button>
 
     <div v-if="showDetails" class="block details">
-      <input v-model="name" class="input" placeholder="название" />
+      <BeerNameInput v-model="name" :catalog="catalog" @pick="applyKnown" />
       <input v-model="brewery" class="input" placeholder="пивоварня" />
       <input v-model="place" class="input" placeholder="место" />
       <div class="row">

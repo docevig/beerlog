@@ -5,10 +5,19 @@ import StyleBars from '../components/StyleBars.vue'
 import SrmRange from '../components/SrmRange.vue'
 import { useEntries } from '../store/entries'
 import { useUi } from '../store/ui'
-import { totalMl, totalAlcoholGrams, styleBreakdown, soberDaysCount, heaviestDay } from '../lib/stats'
+import {
+  totalMl,
+  totalAlcoholGrams,
+  styleBreakdown,
+  soberDaysCount,
+  heaviestDay,
+  placeBreakdown,
+  spending,
+} from '../lib/stats'
+import MyBeers from '../components/MyBeers.vue'
 import { achievements } from '../lib/achievements'
 import { dayKey, dayStart, todayKey } from '../lib/day'
-import { formatLitres, formatDay, formatGrams } from '../lib/format'
+import { formatLitres, formatDay, formatGrams, withPlural } from '../lib/format'
 import { useCountUp } from '../lib/countUp'
 import { monthSummaryText, shareUrl } from '../lib/share'
 import { tg } from '../lib/telegram'
@@ -66,6 +75,8 @@ const soberInMonth = computed(() => soberDaysCount(monthEntries.value, monthFirs
 const peak = computed(() => heaviestDay(entries.value))
 const shares = computed(() => styleBreakdown(monthEntries.value).slice(0, 6))
 const badges = computed(() => achievements(entries.value))
+const places = computed(() => placeBreakdown(monthEntries.value))
+const money = computed(() => spending(monthEntries.value))
 
 // Главная цифра прокручивается от нуля — единственное место, где это уместно
 const monthLitres = useCountUp(() => totalMl(monthEntries.value) / 1000)
@@ -138,6 +149,28 @@ function shareMonth() {
         <SrmRange :entries="entries" />
       </div>
 
+      <div v-if="places.length" class="block">
+        <div class="eyebrow">где чаще</div>
+        <div v-for="p in places.slice(0, 5)" :key="p.place" class="place">
+          <span class="place-name">{{ p.place }}</span>
+          <span class="place-times">{{ withPlural(p.times, 'раз', 'раза', 'раз') }}</span>
+        </div>
+      </div>
+
+      <div v-if="money.counted > 0" class="block">
+        <div class="eyebrow">потрачено за месяц</div>
+        <div class="figure money">{{ money.total.toLocaleString('ru-RU') }} ₽</div>
+        <!-- Честно говорим, что считаем не всё: цену указывают не всегда -->
+        <div class="money-note">
+          по {{ withPlural(money.counted, 'записи', 'записям', 'записям') }}<template v-if="money.skipped">,
+          у {{ money.skipped }} цена не указана</template>
+        </div>
+      </div>
+
+      <div class="block">
+        <MyBeers :entries="entries" />
+      </div>
+
       <button type="button" class="share" @click="shareMonth">поделиться итогами месяца</button>
 
       <div v-if="badges.length" class="block">
@@ -196,6 +229,30 @@ function shareMonth() {
   margin-bottom: 6px;
 }
 .badge-detail {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.place {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+}
+.place-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.place-times {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.money {
+  font-size: 24px;
+  color: var(--accent-bright);
+}
+.money-note {
   font-size: 11px;
   color: var(--text-faint);
 }
