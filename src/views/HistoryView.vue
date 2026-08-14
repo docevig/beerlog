@@ -8,10 +8,41 @@ import { dayKey, todayKey } from '../lib/day'
 import { totalMl, totalAlcoholGrams } from '../lib/stats'
 import { formatLitres, formatDay, formatGrams, withPlural } from '../lib/format'
 import { exportEntries } from '../lib/export'
+import { mergeImport, readJsonFile } from '../lib/importer'
 import type { Entry } from '../types'
 
-const { entries, remove, update, restore } = useEntries()
+const { entries, remove, update, restore, importMany } = useEntries()
 const { takeFocusDay } = useUi()
+
+const fileInput = ref<HTMLInputElement | null>(null)
+const importReport = ref('')
+
+function pickFile() {
+  fileInput.value?.click()
+}
+
+async function onFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+
+  try {
+    const raw = await readJsonFile(file)
+    const result = mergeImport(entries.value, raw)
+    await importMany(result.added)
+
+    const parts = [`добавлено ${result.added.length}`]
+    if (result.skipped) parts.push(`уже было ${result.skipped}`)
+    if (result.broken) parts.push(`пропущено битых ${result.broken}`)
+    importReport.value = parts.join(', ')
+  } catch (e) {
+    importReport.value = e instanceof Error ? e.message : 'не удалось разобрать файл'
+  } finally {
+    // Сбрасываем поле, иначе повторный выбор того же файла не вызовет событие
+    input.value = ''
+    setTimeout(() => (importReport.value = ''), 6000)
+  }
+}
 
 /** Отметка, ждущая подтверждения удаления */
 const pendingRemoval = ref<Entry | undefined>(undefined)
@@ -134,7 +165,12 @@ async function applyEdit(patch: Partial<Entry>) {
         </TransitionGroup>
       </div>
 
-      <button type="button" class="link" @click="exportEntries(entries)">выгрузить историю в файл</button>
+      <div class="transfer">
+        <button type="button" class="link" @click="exportEntries(entries)">выгрузить в файл</button>
+        <button type="button" class="link" @click="pickFile">загрузить из файла</button>
+        <input ref="fileInput" type="file" accept="application/json,.json" class="hidden" @change="onFile" />
+      </div>
+      <p v-if="importReport" class="report">{{ importReport }}</p>
     </template>
 
     <Transition name="toast">
@@ -204,7 +240,6 @@ async function applyEdit(patch: Partial<Entry>) {
   font-size: 14px;
 }
 .link {
-  align-self: flex-start;
   padding: 0;
   border: 0;
   background: none;
@@ -212,6 +247,18 @@ async function applyEdit(patch: Partial<Entry>) {
   font: inherit;
   font-size: 13px;
   cursor: pointer;
+}
+.transfer {
+  display: flex;
+  gap: 18px;
+}
+.hidden {
+  display: none;
+}
+.report {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
 }
 .undo {
   position: sticky;

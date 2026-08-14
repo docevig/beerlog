@@ -135,6 +135,27 @@ export function useEntries() {
     await saveMonth(m.year, m.month)
   }
 
+  /**
+   * Вставляет пачку отметок из выгрузки. Месяцы пересохраняются по одному
+   * разу, а не на каждую запись: иначе импорт года истории означал бы
+   * сотни обращений к хранилищу.
+   */
+  async function importMany(incoming: Entry[]): Promise<void> {
+    if (incoming.length === 0) return
+
+    entries.value = [...entries.value, ...incoming].sort((a, b) => a.ts - b.ts)
+
+    const months = new Map<string, { year: number; month: number }>()
+    for (const e of incoming) {
+      const m = monthOf(e.ts)
+      months.set(`${m.year}-${m.month}`, m)
+    }
+
+    for (const m of months.values()) {
+      await saveMonth(m.year, m.month)
+    }
+  }
+
   /** Возвращает удалённую отметку целиком, сохраняя её исходный id и время */
   async function restore(entry: Entry): Promise<void> {
     if (entries.value.some((e) => e.id === entry.id)) return
@@ -153,6 +174,7 @@ export function useEntries() {
     update,
     remove,
     restore,
+    importMany,
     saveProfile,
   }
 }
