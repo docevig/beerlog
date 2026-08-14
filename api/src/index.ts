@@ -15,6 +15,8 @@ interface Ctx {
   startParam?: string
   url: URL
   request: Request
+  /** Фоновая работа после ответа; привязан к платформенному контексту */
+  waitUntil: (work: Promise<unknown>) => void
 }
 
 const CORS_HEADERS = {
@@ -256,6 +258,121 @@ async function avatar(ctx: Ctx, targetId: number): Promise<Response> {
       ...CORS_HEADERS,
     },
   })
+}
+
+/** Больше сжатого снимка быть не должно: клиент шлёт 600 px в webp */
+const MAX_PHOTO_BYTES = 600_000
+
+/**
+ * Принимает фото этикетки и складывает его в Telegram.
+ *
+ * Объектное хранилище Cloudflare требует платной подписки, а Telegram
+ * держит файлы бесплатно и бессрочно. Снимок отправляется владельцу
+ * документом (так он сохраняется байт-в-байт, без пережатия), сообщение
+ * сразу удаляется, а идентификатор файла продолжает работать.
+ */
+async function uploadPhoto(ctx: Ctx): Promise<Response> {
+  const beerKey = (ctx.url.searchParams.get('beer') ?? '').trim().toLowerCase().slice(0, 120)
+  if (!beerKey) return json({ error: 'не указан сорт' }, 400)
+
+  const type = ctx.request.headers.get('content-type') ?? ''
+  if (!type.startsWith('image/')) return json({ error: 'это не изображение' }, 415)
+
+  const bytes = await ctx.request.arrayBuffer()
+  if (bytes.byteLength === 0) return json({ error: 'пустой файл' }, 400)
+  if (bytes.byteLength > MAX_PHOTO_BYTES) return json({ error: 'снимок слишком большой' }, 413)
+
+  const extension = type.includes('webp') ? 'webp' : 'jpg'
+  const form = new FormData()
+  form.append('chat_id', String(ctx.user.id))
+  form.append('disable_notification', 'true')
+  form.append('document', new Blob([bytes], { type }), `label.${extension}`)
+
+  const sent = (await (
+    await fetch(`https://api.telegram.org/bot${ctx.env.BOT_TOKEN}/sendDocument`, {
+      method: 'POST',
+      body: form,
+    })
+  ).json()) as {
+    ok: boolean
+    description?: string
+    result?: { message_id: number; document?: { file_id: string } }
+  }
+
+  if (!sent.ok || !sent.result?.document?.file_id) {
+    log('не удалось сохранить снимок', { description: sent.description })
+    // Чаще всего — пользователь запретил боту писать ему
+    return json({ error: 'не удалось сохранить снимок' }, 502)
+  }
+
+  const fileId = sent.result.document.file_id
+
+  // Убираем сообщение из переписки: идентификатор файла продолжает работать
+  ctx.waitUntil(
+    fetch(`https://api.telegram.org/bot${ctx.env.BOT_TOKEN}/deleteMessage`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ chat_id: ctx.user.id, message_id: sent.result.message_id }),
+    }).then(() => undefined),
+  )
+
+  await ctx.env.DB.prepare(
+    `INSERT INTO photos (file_id, tg_id, beer_key, bytes, created_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (file_id) DO NOTHING`,
+  )
+    .bind(fileId, ctx.user.id, beerKey, bytes.byteLength, Date.now())
+    .run()
+
+  return json({ fileId })
+}
+
+/** Отдаёт снимок. Владельца проверяем по базе: идентификатор чужим не отдаём */
+async function getPhoto(ctx: Ctx, fileId: string): Promise<Response> {
+  const own = await ctx.env.DB.prepare(`SELECT 1 AS ok FROM photos WHERE file_id = ? AND tg_id = ?`)
+    .bind(fileId, ctx.user.id)
+    .first()
+
+  if (!own) return json({ error: 'это не ваш снимок' }, 403)
+
+  const api = `https://api.telegram.org/bot${ctx.env.BOT_TOKEN}`
+  const file = (await (await fetch(`${api}/getFile?file_id=${encodeURIComponent(fileId)}`)).json()) as {
+    ok: boolean
+    result?: { file_path: string }
+  }
+
+  if (!file.ok || !file.result) return json({ error: 'снимок недоступен' }, 404)
+
+  const image = await fetch(`https://api.telegram.org/file/bot${ctx.env.BOT_TOKEN}/${file.result.file_path}`)
+  if (!image.ok) return json({ error: 'снимок недоступен' }, 404)
+
+  return new Response(image.body, {
+    headers: {
+      'content-type': image.headers.get('content-type') ?? 'image/webp',
+      // Снимок неизменен: каждый новый получает свой идентификатор
+      'cache-control': 'private, max-age=31536000, immutable',
+      ...CORS_HEADERS,
+    },
+  })
+}
+
+/** Снимки по сортам — чтобы показать их в карточках коллекции */
+async function listPhotos(ctx: Ctx): Promise<Response> {
+  const { results } = await ctx.env.DB.prepare(
+    `SELECT beer_key, file_id FROM photos WHERE tg_id = ? ORDER BY created_at DESC LIMIT 200`,
+  )
+    .bind(ctx.user.id)
+    .all()
+
+  return json({ photos: results })
+}
+
+async function deletePhoto(ctx: Ctx, fileId: string): Promise<Response> {
+  await ctx.env.DB.prepare(`DELETE FROM photos WHERE file_id = ? AND tg_id = ?`)
+    .bind(fileId, ctx.user.id)
+    .run()
+
+  // Сам файл остаётся у Telegram, но без записи он недостижим
+  return json({ ok: true })
 }
 
 /** Дружба рвётся с обеих сторон сразу: односторонней она не бывает */
@@ -625,6 +742,13 @@ async function route(ctx: Ctx): Promise<Response> {
   const avatarPath = pathname.match(/^\/avatar\/(\d{1,20})$/)
   if (method === 'GET' && avatarPath) return avatar(ctx, Number(avatarPath[1]))
 
+  if (method === 'POST' && pathname === '/photos') return uploadPhoto(ctx)
+  if (method === 'GET' && pathname === '/photos') return listPhotos(ctx)
+
+  const photoPath = pathname.match(/^\/photos\/([A-Za-z0-9_-]{10,200})$/)
+  if (method === 'GET' && photoPath) return getPhoto(ctx, photoPath[1])
+  if (method === 'DELETE' && photoPath) return deletePhoto(ctx, photoPath[1])
+
   const accept = pathname.match(/^\/invites\/([A-Za-z0-9_-]{1,64})\/accept$/)
   if (method === 'POST' && accept) return acceptInvite(ctx, accept[1])
 
@@ -667,6 +791,8 @@ export default {
         startParam: verified.data.startParam,
         url: new URL(request.url),
         request,
+        // Именно так: ctx нельзя разбирать по полям, waitUntil потеряет привязку
+        waitUntil: (work) => ctx.waitUntil(work),
       }
 
       // Профиль обновляем в фоне: ответ не должен ждать записи имени

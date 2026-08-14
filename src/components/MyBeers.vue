@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import type { Entry } from '../types'
+import LabelPhoto from './LabelPhoto.vue'
+import { apiAvailable, listPhotos } from '../lib/api'
 import { buildCatalog } from '../lib/catalog'
 import { styleTitle } from '../data/styles'
 import { styleColor, textOn } from '../lib/srm'
@@ -12,6 +14,38 @@ const props = defineProps<{ entries: Entry[] }>()
 type Order = 'recent' | 'often' | 'rating'
 
 const order = ref<Order>('recent')
+
+/** Раскрытый сорт: там живёт этикетка */
+const openName = ref<string | null>(null)
+
+/** Ключ сорта в нижнем регистре → идентификатор снимка */
+const photos = ref<Record<string, string>>({})
+
+function toggle(name: string) {
+  openName.value = openName.value === name ? null : name
+}
+
+function photoOf(name: string): string | null {
+  return photos.value[name.toLowerCase()] ?? null
+}
+
+function remember(name: string, fileId: string) {
+  photos.value = { ...photos.value, [name.toLowerCase()]: fileId }
+}
+
+onMounted(async () => {
+  if (!apiAvailable()) return
+
+  try {
+    const { photos: known } = await listPhotos()
+    // Первый снимок сорта — самый свежий: список приходит отсортированным
+    const map: Record<string, string> = {}
+    for (const p of known) if (!map[p.beer_key]) map[p.beer_key] = p.file_id
+    photos.value = map
+  } catch {
+    // Без снимков экран остаётся рабочим
+  }
+})
 
 const beers = computed(() => {
   const list = buildCatalog(props.entries)
@@ -37,19 +71,29 @@ const beers = computed(() => {
     </div>
 
     <div v-for="beer in beers" :key="beer.name" class="beer">
-      <span class="chip" :style="{ background: styleColor(beer.style), color: textOn(beer.style) }">
-        {{ styleTitle(beer.style) }}
-      </span>
-      <span class="body">
-        <span class="name">{{ beer.name }}</span>
-        <span class="meta">
-          <template v-if="beer.brewery">{{ beer.brewery }} · </template>
-          {{ withPlural(beer.times, 'раз', 'раза', 'раз') }} ·
-          {{ formatDay(dayKey(beer.lastTs)) }}
-          <template v-if="beer.price"> · {{ beer.price }} ₽</template>
+      <button type="button" class="row" @click="toggle(beer.name)">
+        <span class="chip" :style="{ background: styleColor(beer.style), color: textOn(beer.style) }">
+          {{ styleTitle(beer.style) }}
         </span>
-      </span>
-      <span v-if="beer.rating" class="rating">{{ beer.rating }}/5</span>
+        <span class="body">
+          <span class="name">{{ beer.name }}</span>
+          <span class="meta">
+            <template v-if="beer.brewery">{{ beer.brewery }} · </template>
+            {{ withPlural(beer.times, 'раз', 'раза', 'раз') }} ·
+            {{ formatDay(dayKey(beer.lastTs)) }}
+            <template v-if="beer.price"> · {{ beer.price }} ₽</template>
+          </span>
+        </span>
+        <span v-if="beer.rating" class="rating">{{ beer.rating }}/5</span>
+      </button>
+
+      <div v-if="openName === beer.name" class="photo">
+        <LabelPhoto
+          :beer-key="beer.name.toLowerCase()"
+          :file-id="photoOf(beer.name)"
+          @uploaded="(id) => remember(beer.name, id)"
+        />
+      </div>
     </div>
   </div>
 
@@ -89,11 +133,24 @@ const beers = computed(() => {
   color: var(--accent-bright);
 }
 .beer {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.row {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--line);
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.photo {
+  margin-top: 8px;
 }
 .chip {
   flex: none;

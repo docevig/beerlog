@@ -210,6 +210,63 @@ export async function loadAvatar(tgId: number): Promise<string | null> {
   }
 }
 
+/** Загружает сжатый снимок этикетки; сервер кладёт его в Telegram */
+export async function uploadPhoto(beerKey: string, blob: Blob): Promise<{ fileId: string }> {
+  const initData = tg()?.initData
+  if (!initData) throw new Error('доступно только внутри Telegram')
+
+  const response = await fetch(`${API_URL}/photos?beer=${encodeURIComponent(beerKey)}`, {
+    method: 'POST',
+    body: blob,
+    headers: { 'content-type': blob.type, 'x-init-data': initData },
+    signal: AbortSignal.timeout(30_000),
+  })
+
+  if (!response.ok) {
+    const detail = (await response.json().catch(() => ({}))) as { error?: string }
+    throw new Error(detail.error ?? 'снимок не загрузился')
+  }
+
+  return (await response.json()) as { fileId: string }
+}
+
+export function listPhotos(): Promise<{ photos: { beer_key: string; file_id: string }[] }> {
+  return request('/photos')
+}
+
+export function deletePhoto(fileId: string): Promise<{ ok: boolean }> {
+  return request(`/photos/${encodeURIComponent(fileId)}`, { method: 'DELETE' })
+}
+
+/** Тот же приём, что с аватарами: тег картинки не умеет слать подпись */
+const photoCache = new Map<string, string | null>()
+
+export async function loadPhoto(fileId: string): Promise<string | null> {
+  if (photoCache.has(fileId)) return photoCache.get(fileId) ?? null
+
+  const initData = tg()?.initData
+  if (!initData) return null
+
+  try {
+    const response = await fetch(`${API_URL}/photos/${encodeURIComponent(fileId)}`, {
+      headers: { 'x-init-data': initData },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    })
+
+    if (!response.ok) {
+      photoCache.set(fileId, null)
+      return null
+    }
+
+    const url = URL.createObjectURL(await response.blob())
+    photoCache.set(fileId, url)
+    return url
+  } catch {
+    photoCache.set(fileId, null)
+    return null
+  }
+}
+
 /** Ссылка-приглашение: код уезжает в start_param и прилетает обратно при открытии */
 export function inviteLink(code: string): string {
   return `https://t.me/beerlogs_bot/app?startapp=${code}`
