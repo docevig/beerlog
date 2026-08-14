@@ -35,8 +35,9 @@ export function monthSummaryText(entries: Entry[], month: number): string {
 
   const strongest = entries.reduce((best, e) => (entryAbv(e) > entryAbv(best) ? e : best), entries[0])
 
+  // «в августе», а не «мой августе»: список месяцев в предложном падеже
   return [
-    `мой ${MONTHS_IN[month - 1]}: ${litres}, ${portions}`,
+    `в ${MONTHS_IN[month - 1]}: ${litres}, ${portions}`,
     `стилей попробовано: ${styles} из ${BEER_STYLES.length}`,
     `самое тёмное — ${styleTitle(darkest).toLowerCase()}, самое крепкое — ${entryAbv(strongest).toString().replace('.', ',')}%`,
   ].join('\n')
