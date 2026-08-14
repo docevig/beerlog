@@ -118,6 +118,44 @@ export function spending(entries: Entry[]): { total: number; counted: number; sk
   return { total, counted, skipped }
 }
 
+export interface MonthPoint {
+  /** Номер месяца, 1–12 */
+  month: number
+  ml: number
+  portions: number
+}
+
+/**
+ * Разрез года по месяцам. Возвращаются все двенадцать, включая пустые:
+ * столбики должны стоять на своих местах, а пустой месяц — тоже факт.
+ */
+export function byMonth(entries: Entry[], year: number): MonthPoint[] {
+  const points: MonthPoint[] = Array.from({ length: 12 }, (_, i) => ({
+    month: i + 1,
+    ml: 0,
+    portions: 0,
+  }))
+
+  for (const e of entries) {
+    // Считаем по дню, а не по времени: кружка в час ночи относится к предыдущему вечеру
+    const [y, m] = dayKey(e.ts).split('-').map(Number)
+    if (y !== year) continue
+
+    const point = points[m - 1]
+    point.ml += e.ml
+    point.portions += 1
+  }
+
+  return points
+}
+
+/** Годы, в которых есть хоть одна отметка, от свежего к старому */
+export function yearsWithEntries(entries: Entry[]): number[] {
+  const years = new Set<number>()
+  for (const e of entries) years.add(Number(dayKey(e.ts).slice(0, 4)))
+  return [...years].sort((a, b) => b - a)
+}
+
 /** День с наибольшим объёмом */
 export function heaviestDay(entries: Entry[]): { day: string; ml: number } | undefined {
   let best: { day: string; ml: number } | undefined

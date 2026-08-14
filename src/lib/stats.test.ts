@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { Entry } from '../types'
-import { totalMl, totalAlcoholGrams, styleBreakdown, byDay, soberDaysCount, longestSoberStreak, distinctStyles } from './stats'
+import { totalMl, totalAlcoholGrams, styleBreakdown, byDay, soberDaysCount, longestSoberStreak, distinctStyles, byMonth, yearsWithEntries } from './stats'
 
 /** Три отметки: две в пятницу вечером, одна ночью — она тоже пятничная */
 const entries: Entry[] = [
@@ -69,5 +69,28 @@ describe('longestSoberStreak', () => {
 describe('distinctStyles', () => {
   it('считает попробованные стили без повторов', () => {
     expect(distinctStyles(entries)).toBe(2)
+  })
+})
+
+describe('byMonth', () => {
+  it('раскладывает год по месяцам и возвращает все двенадцать', () => {
+    const result = byMonth(entries, 2026)
+    expect(result).toHaveLength(12)
+    // Ночная отметка 15 августа относится к 14-му — она же остаётся в августе
+    expect(result[7]).toEqual({ month: 8, ml: 1330, portions: 3 })
+    expect(result[0]).toEqual({ month: 1, ml: 0, portions: 0 })
+  })
+
+  it('не смешивает годы', () => {
+    const past: Entry[] = [{ id: 'p', ts: new Date(2025, 7, 14, 19, 0).getTime(), ml: 500, style: 'lager' }]
+    expect(byMonth([...entries, ...past], 2026)[7].ml).toBe(1330)
+    expect(byMonth([...entries, ...past], 2025)[7].ml).toBe(500)
+  })
+})
+
+describe('yearsWithEntries', () => {
+  it('перечисляет годы от свежего к старому без повторов', () => {
+    const past: Entry[] = [{ id: 'p', ts: new Date(2024, 2, 1, 19, 0).getTime(), ml: 500, style: 'lager' }]
+    expect(yearsWithEntries([...entries, ...past])).toEqual([2026, 2024])
   })
 })
