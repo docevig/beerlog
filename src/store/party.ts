@@ -54,6 +54,29 @@ export function useParty() {
   }
 
   /**
+   * Отправляет отметку в конкретный вечер, а не в тот, что считается активным.
+   * Нужно для догона: кружка, записанная до того, как приложение узнало
+   * о вечере, иначе так и осталась бы только в личном дневнике.
+   */
+  async function mirrorInto(partyId: string, entry: Entry): Promise<boolean> {
+    if (!apiAvailable()) return false
+
+    try {
+      await pushPartyEntry(partyId, {
+        id: entry.id,
+        ts: entry.ts,
+        ml: entry.ml,
+        style: entry.style,
+        name: entry.name,
+      })
+      return true
+    } catch {
+      // Закрытый вечер сервер не примет — это нормально, просто не догоняем
+      return false
+    }
+  }
+
+  /**
    * Догоняет стол правкой. Идущий вечер для этого не нужен: отметка могла
    * уехать в уже закрытый, а расходиться с дневником стол не должен.
    */
@@ -89,6 +112,7 @@ export function useParty() {
     parties: computed(() => known.value),
     refresh,
     mirror,
+    mirrorInto,
     mirrorUpdate,
     mirrorRemove,
     setActive: (party: PartySummary | null) => (active.value = party),

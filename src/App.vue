@@ -9,6 +9,7 @@ import { createStore } from './storage'
 import { ensureMeta } from './storage/meta'
 import { useEntries } from './store/entries'
 import { useUi } from './store/ui'
+import { useParty } from './store/party'
 import { tg } from './lib/telegram'
 import { acceptInvite, apiAvailable } from './lib/api'
 
@@ -48,6 +49,7 @@ const waiting = ref(0)
 
 const { load } = useEntries()
 const { focusDay } = useUi()
+const { refresh: refreshParty } = useParty()
 
 // Клик по дню в календаре сам перебрасывает на вкладку истории
 watch(focusDay, (day) => {
@@ -125,6 +127,21 @@ onMounted(async () => {
     failure.value = e instanceof Error ? e.message : String(e)
   } finally {
     ready.value = true
+  }
+
+  /*
+    Про идущий вечер надо знать с самого запуска. Раньше это выяснялось
+    только при открытии вкладки компании, и кружка, записанная сразу после
+    старта приложения, на общий стол не уезжала совсем.
+  */
+  if (apiAvailable()) {
+    const catchUpParty = () => {
+      if (document.visibilityState === 'visible') void refreshParty()
+    }
+
+    void refreshParty()
+    // Вечер могли начать, пока приложение было свёрнуто
+    document.addEventListener('visibilitychange', catchUpParty)
   }
 
   // Пришли по ссылке-приглашению: принимаем её и показываем компанию

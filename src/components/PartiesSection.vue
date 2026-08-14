@@ -26,7 +26,7 @@ import { tg } from '../lib/telegram'
 
 const props = defineProps<{ meId: number }>()
 
-const { active, parties, refresh, mirrorUpdate, mirrorRemove } = useParty()
+const { active, parties, refresh, mirrorInto, mirrorUpdate, mirrorRemove } = useParty()
 const { entries } = useEntries()
 const { nameOf } = useFriendNames()
 
@@ -121,6 +121,20 @@ async function reconcile(table: PartyState): Promise<boolean> {
     ) {
       await mirrorUpdate(mine)
       changed = true
+    }
+  }
+
+  /*
+    Обратная сторона сверки: кружка, записанная до того, как приложение узнало
+    о вечере, на стол не уехала вовсе. Досылаем всё своё, что попало во время
+    вечера. Закрытый вечер не трогаем — сервер его и не примет.
+  */
+  if (table.party.ended_at === null) {
+    const onTable = new Set(table.entries.filter((e) => e.tg_id === props.meId).map((e) => e.id))
+
+    for (const mine of entries.value) {
+      if (mine.ts < table.party.started_at || onTable.has(mine.id)) continue
+      if (await mirrorInto(table.party.id, mine)) changed = true
     }
   }
 
