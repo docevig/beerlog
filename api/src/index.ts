@@ -352,7 +352,11 @@ async function getParty(ctx: Ctx, partyId: string): Promise<Response> {
   return json({ party, members: members.results, entries: entries.results })
 }
 
-/** Список вечеринок: активная сверху, остальные — свежими вперёд */
+/**
+ * Список вечеринок: активная сверху, остальные — свежими вперёд.
+ * Заодно отдаём состояние активного стола, чтобы клиенту не пришлось
+ * ходить за ним вторым запросом — по медленной сети это заметно.
+ */
 async function listParties(ctx: Ctx): Promise<Response> {
   const { results } = await ctx.env.DB.prepare(
     `SELECT p.id, p.title, p.host_id, p.started_at, p.ended_at,
@@ -429,6 +433,31 @@ async function partyStats(ctx: Ctx): Promise<Response> {
   })
 }
 
+/**
+ * Удаляет вечер целиком — для случаев «нажал по ошибке» и «вечера не было».
+ * Личные отметки участников не трогаются: они живут в дневниках, а выпито
+ * было по-настоящему. Стирается только общий стол.
+ */
+async function deleteParty(ctx: Ctx, partyId: string): Promise<Response> {
+  const party = await ctx.env.DB.prepare(`SELECT host_id FROM parties WHERE id = ?`)
+    .bind(partyId)
+    .first<{ host_id: number }>()
+
+  if (!party) return json({ error: 'вечеринка не найдена' }, 404)
+  if (party.host_id !== ctx.user.id) {
+    return json({ error: 'удалить вечер может только тот, кто его начал' }, 403)
+  }
+
+  await ctx.env.DB.batch([
+    ctx.env.DB.prepare(`DELETE FROM party_entries WHERE party_id = ?`).bind(partyId),
+    ctx.env.DB.prepare(`DELETE FROM party_members WHERE party_id = ?`).bind(partyId),
+    ctx.env.DB.prepare(`DELETE FROM invites WHERE party_id = ?`).bind(partyId),
+    ctx.env.DB.prepare(`DELETE FROM parties WHERE id = ?`).bind(partyId),
+  ])
+
+  return json({ ok: true })
+}
+
 async function closeParty(ctx: Ctx, partyId: string): Promise<Response> {
   const party = await ctx.env.DB.prepare(`SELECT host_id, ended_at FROM parties WHERE id = ?`)
     .bind(partyId)
@@ -463,6 +492,7 @@ async function route(ctx: Ctx): Promise<Response> {
 
   const party = pathname.match(/^\/parties\/([A-Za-z0-9-]{36})$/)
   if (method === 'GET' && party) return getParty(ctx, party[1])
+  if (method === 'DELETE' && party) return deleteParty(ctx, party[1])
 
   const partyEntries = pathname.match(/^\/parties\/([A-Za-z0-9-]{36})\/entries$/)
   if (method === 'POST' && partyEntries) return addPartyEntry(ctx, partyEntries[1])

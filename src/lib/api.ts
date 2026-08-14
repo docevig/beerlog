@@ -36,19 +36,34 @@ export function apiAvailable(): boolean {
   return Boolean(tg()?.initData)
 }
 
+/**
+ * Дольше ждать нет смысла: без предела запрос по капризной сети висит
+ * бесконечно, и экран навсегда застревает на «спрашиваем сервер».
+ */
+const TIMEOUT_MS = 12_000
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const initData = tg()?.initData
   if (!initData) throw new Error('доступно только внутри Telegram')
 
-  const response = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers: {
-      'content-type': 'application/json',
-      // Подпись Telegram — единственное удостоверение личности для сервера
-      'x-init-data': initData,
-      ...(init.headers ?? {}),
-    },
-  })
+  let response: Response
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      ...init,
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+      headers: {
+        'content-type': 'application/json',
+        // Подпись Telegram — единственное удостоверение личности для сервера
+        'x-init-data': initData,
+        ...(init.headers ?? {}),
+      },
+    })
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'TimeoutError') {
+      throw new Error('сервер не ответил — проверь связь и попробуй ещё раз')
+    }
+    throw new Error('нет связи с сервером')
+  }
 
   if (!response.ok) {
     const detail = (await response.json().catch(() => ({}))) as { error?: string }
@@ -141,6 +156,11 @@ export function pushPartyEntry(
 
 export function closeParty(id: string): Promise<{ ok: boolean }> {
   return request(`/parties/${id}/close`, { method: 'POST' })
+}
+
+/** Стирает вечер у всех участников; личные дневники не затрагиваются */
+export function deleteParty(id: string): Promise<{ ok: boolean }> {
+  return request(`/parties/${id}`, { method: 'DELETE' })
 }
 
 export function partyInvite(partyId: string): Promise<{ code: string; expiresAt: number }> {

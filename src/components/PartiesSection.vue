@@ -6,6 +6,7 @@ import {
   startParty,
   fetchParty,
   closeParty,
+  deleteParty,
   partyInvite,
   fetchPartyStats,
   inviteLink,
@@ -92,9 +93,12 @@ async function load() {
   }
 
   try {
-    await refresh()
+    // Список и статистика независимы — спрашиваем разом, а не по очереди
+    const [, freshStats] = await Promise.all([refresh(), fetchPartyStats()])
+    stats.value = freshStats
+
+    // Состояние стола можно узнать только после того, как выяснили активный вечер
     if (active.value) state.value = await fetchParty(active.value.id)
-    stats.value = await fetchPartyStats()
   } catch (e) {
     failure.value = e instanceof Error ? e.message : String(e)
   }
@@ -147,6 +151,30 @@ async function finish() {
 
 /** Открытый прошлый вечер: тот же стол, но закрытый и только для чтения */
 const past = ref<PartyState | null>(null)
+
+/** Удаление подтверждается вторым нажатием — отменить его уже нельзя */
+const confirmingId = ref<string | null>(null)
+
+async function removeParty(id: string) {
+  if (confirmingId.value !== id) {
+    confirmingId.value = id
+    setTimeout(() => {
+      if (confirmingId.value === id) confirmingId.value = null
+    }, 4000)
+    return
+  }
+
+  confirmingId.value = null
+
+  try {
+    await deleteParty(id)
+    past.value = null
+    demoPast.value = demoPast.value.filter((p) => p.id !== id)
+    await load()
+  } catch (e) {
+    failure.value = e instanceof Error ? e.message : String(e)
+  }
+}
 
 async function openPast(summary: PartySummary) {
   if (!apiAvailable()) {
@@ -272,6 +300,11 @@ onMounted(load)
       <div v-if="past" class="sheet" @click.self="past = null">
         <div class="sheet-inner">
           <PartyTable :state="past" :me-id="props.meId" />
+
+          <button v-if="past.party.host_id === props.meId" type="button" class="danger" @click="removeParty(past.party.id)">
+            {{ confirmingId === past.party.id ? 'точно удалить? нажми ещё раз' : 'удалить вечер' }}
+          </button>
+
           <button type="button" class="dismiss" @click="past = null">закрыть</button>
         </div>
       </div>
@@ -372,6 +405,18 @@ onMounted(load)
   border-radius: var(--radius);
   background: var(--surface);
   color: var(--text-dim);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+/* Удаление необратимо, поэтому требует второго нажатия */
+.danger {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #7b1a00;
+  border-radius: var(--radius);
+  background: none;
+  color: #e0975f;
   font: inherit;
   font-size: 14px;
   cursor: pointer;

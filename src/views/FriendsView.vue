@@ -187,8 +187,11 @@ async function load() {
   failure.value = ''
 
   try {
-    // Сначала отдаём свои итоги, потом забираем общие — иначе друзья увидят вчерашнее
-    await pushTotals({
+    /*
+      Витрину отправляем, но не ждём: она нужна друзьям, а не этому экрану —
+      свои цифры берутся из локальной истории. Ожидание удваивало задержку.
+    */
+    void pushTotals({
       period,
       ml: mine.value.ml,
       portions: monthEntries.value.length,
@@ -196,7 +199,8 @@ async function load() {
       avgSrm: mine.value.avgSrm,
       stylesList: myStyles.value,
       stylesFirst: myFirsts.value,
-    })
+    }).catch(() => {})
+
     friends.value = (await fetchFriends(scope.value === 'all' ? 'all' : period)).friends
   } catch (e) {
     failure.value = e instanceof Error ? e.message : String(e)
