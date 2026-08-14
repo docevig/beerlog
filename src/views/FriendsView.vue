@@ -26,7 +26,6 @@ const friends = ref<FriendTotals[]>([])
 
 /** Только чтобы подписать «ты» в списке; правами это не управляет */
 const myId = tg()?.initDataUnsafe?.user?.id ?? 0
-const myPhoto = tg()?.initDataUnsafe?.user?.photo_url
 const myInitial = (tg()?.initDataUnsafe?.user?.first_name ?? 'я').trim().charAt(0).toUpperCase()
 const loading = ref(false)
 const failure = ref('')
@@ -346,7 +345,7 @@ function tasteHint(friend: FriendTotals): string {
              а не второй экран итогов -->
         <div class="friend self">
           <div class="friend-head static">
-            <Avatar :tg-id="myId" :name="myInitial" :ring="srmColor(mine.avgSrm || 4)" :photo-url="myPhoto" />
+            <Avatar :tg-id="myId" :name="myInitial" :ring="srmColor(mine.avgSrm || 4)" />
             <span class="friend-body">
               <span class="friend-name">ты</span>
               <span class="friend-numbers">
@@ -361,12 +360,7 @@ function tasteHint(friend: FriendTotals): string {
         <div v-for="f in sortedFriends" :key="f.tg_id" class="friend">
           <button type="button" class="friend-head" @click="toggle(f.tg_id)">
             <!-- Обводка аватара — средний цвет месяца: вкус виден до раскрытия -->
-            <Avatar
-              :tg-id="f.tg_id"
-              :name="displayName(f)"
-              :ring="srmColor(f.avg_srm || 4)"
-              :photo-url="f.photo_url"
-            />
+            <Avatar :tg-id="f.tg_id" :name="displayName(f)" :ring="srmColor(f.avg_srm || 4)" />
             <span class="friend-body">
               <span class="friend-name">{{ displayName(f) }}</span>
               <span class="friend-numbers">

@@ -7,31 +7,27 @@ const props = defineProps<{
   name: string
   /** Цвет обводки — средний оттенок месяца по шкале SRM */
   ring: string
-  /** Готовая ссылка, если она уже пришла от Telegram */
-  photoUrl?: string | null
 }>()
 
-const src = ref<string | null>(props.photoUrl ?? null)
+const src = ref<string | null>(null)
 
-/** Фото тянем сами: у Telegram оно приходит далеко не всегда */
+/**
+ * Фото всегда берём у своего сервера.
+ *
+ * Ссылка, которую Telegram кладёт в данные входа, ведёт на автоматическую
+ * заглушку с инициалами: она успешно загружается, поэтому подмену нельзя
+ * заметить по ошибке картинки — только не использовать её вовсе.
+ */
 async function fetchPhoto() {
   if (!props.tgId) return
   src.value = await loadAvatar(props.tgId)
 }
 
-/**
- * Ссылка, сохранённая при входе, живёт недолго и часто отдаёт пустоту.
- * Не доверяем ей: если картинка не загрузилась, идём за фото на сервер.
- */
 function onImageError() {
   src.value = null
-  void fetchPhoto()
 }
 
-onMounted(() => {
-  if (!src.value) void fetchPhoto()
-})
-
+onMounted(fetchPhoto)
 watch(() => props.tgId, fetchPhoto)
 
 const initial = (name: string) => name.trim().charAt(0).toUpperCase() || '?'
