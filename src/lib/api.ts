@@ -249,6 +249,14 @@ export function listPhotos(): Promise<{ photos: { beer_key: string; file_id: str
   return request('/photos')
 }
 
+/** Перевешивает снимок на другое название — при исправлении названия в записи */
+export function retagPhoto(fileId: string, beerKey: string): Promise<{ ok: boolean }> {
+  return request(`/photos/${encodeURIComponent(fileId)}`, {
+    method: 'POST',
+    body: JSON.stringify({ beer: beerKey }),
+  })
+}
+
 export function deletePhoto(fileId: string): Promise<{ ok: boolean }> {
   return request(`/photos/${encodeURIComponent(fileId)}`, { method: 'DELETE' })
 }

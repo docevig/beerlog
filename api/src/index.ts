@@ -376,7 +376,24 @@ async function getPhoto(ctx: Ctx, fileId: string): Promise<Response> {
   })
 }
 
-/** Снимки по сортам — чтобы показать их в карточках коллекции */
+/**
+ * Перевешивает снимок на другое название. Нужно при правке: человек
+ * исправляет опечатку в названии, и этикетка должна уехать следом,
+ * иначе она остаётся на слове, которого больше нет ни в одной записи.
+ */
+async function retagPhoto(ctx: Ctx, fileId: string): Promise<Response> {
+  const body = (await ctx.request.json()) as { beer?: string }
+  const beerKey = (body.beer ?? '').trim().toLowerCase().slice(0, 120)
+  if (!beerKey) return json({ error: 'не указано название' }, 400)
+
+  await ctx.env.DB.prepare(`UPDATE photos SET beer_key = ? WHERE file_id = ? AND tg_id = ?`)
+    .bind(beerKey, fileId, ctx.user.id)
+    .run()
+
+  return json({ ok: true })
+}
+
+/** Снимки по названиям — чтобы показать их в карточках коллекции */
 async function listPhotos(ctx: Ctx): Promise<Response> {
   const { results } = await ctx.env.DB.prepare(
     `SELECT beer_key, file_id FROM photos WHERE tg_id = ? ORDER BY created_at DESC LIMIT 200`,
@@ -796,6 +813,7 @@ async function route(ctx: Ctx): Promise<Response> {
 
   const photoPath = pathname.match(/^\/photos\/([A-Za-z0-9_-]{10,200})$/)
   if (method === 'GET' && photoPath) return getPhoto(ctx, photoPath[1])
+  if (method === 'POST' && photoPath) return retagPhoto(ctx, photoPath[1])
   if (method === 'DELETE' && photoPath) return deletePhoto(ctx, photoPath[1])
 
   const accept = pathname.match(/^\/invites\/([A-Za-z0-9_-]{1,64})\/accept$/)

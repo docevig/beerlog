@@ -1,13 +1,22 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import ChoiceGrid, { type Choice } from './ChoiceGrid.vue'
+import BeerNameInput from './BeerNameInput.vue'
+import LabelPhoto from './LabelPhoto.vue'
 import type { Entry } from '../types'
 import { BEER_STYLES, VOLUME_PRESETS, findStyle } from '../data/styles'
 import { styleColor, textOn, subTextOn } from '../lib/srm'
 import { formatAbv, formatPortion } from '../lib/format'
+import { buildCatalog, type KnownBeer } from '../lib/catalog'
+import { useEntries } from '../store/entries'
 
 const props = defineProps<{ entry: Entry }>()
 const emit = defineEmits<{ save: [patch: Partial<Entry>]; cancel: [] }>()
+
+const { entries } = useEntries()
+
+/** Подсказки те же, что при отметке: правка не должна знать меньше добавления */
+const catalog = computed(() => buildCatalog(entries.value))
 
 const ml = ref(props.entry.ml)
 const customMl = ref<number | undefined>(
@@ -22,6 +31,15 @@ const place = ref(props.entry.place ?? '')
 const note = ref(props.entry.note ?? '')
 const rating = ref<number | undefined>(props.entry.rating)
 const price = ref<number | undefined>(props.entry.price)
+
+/**
+ * Выбор знакомого пива подставляет стиль и пивоварню, но не объём:
+ * в правке объём — это ровно то, что человек пришёл поменять руками.
+ */
+function applyKnown(beer: KnownBeer) {
+  style.value = beer.style
+  if (beer.brewery) brewery.value = beer.brewery
+}
 
 /** Время правится как есть — значение для input[type=datetime-local] */
 const when = ref(toLocalInput(props.entry.ts))
@@ -103,7 +121,7 @@ function submit() {
     <input v-model="when" type="datetime-local" class="input" />
 
     <div class="eyebrow">подробности</div>
-    <input v-model="name" class="input" placeholder="название" />
+    <BeerNameInput v-model="name" :catalog="catalog" @pick="applyKnown" />
     <input v-model="brewery" class="input" placeholder="пивоварня" />
     <input v-model="place" class="input" placeholder="место" />
     <div class="row">
@@ -111,6 +129,7 @@ function submit() {
       <input v-model.number="price" type="number" min="0" class="input" placeholder="цена" />
     </div>
     <input v-model="note" class="input" placeholder="заметка" />
+    <LabelPhoto v-if="name.trim()" :name="name" />
 
     <div class="actions">
       <button type="button" class="link" @click="emit('cancel')">отмена</button>

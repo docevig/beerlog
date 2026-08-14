@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { loadPhoto, uploadPhoto, deletePhoto, apiAvailable } from '../lib/api'
 import { compressImage } from '../lib/image'
+import { usePhotos } from '../store/photos'
 
 const props = defineProps<{
-  /** Ключ сорта — к нему привязывается снимок */
-  beerKey: string
-  fileId?: string | null
+  /** Название пива: снимок принадлежит ему, а не отдельной кружке */
+  name: string
 }>()
 
-const emit = defineEmits<{ uploaded: [fileId: string]; removed: [] }>()
+const { load, photoOf, remember, forget } = usePhotos()
+
+const fileId = computed(() => photoOf(props.name))
 
 const src = ref<string | null>(null)
 const busy = ref(false)
@@ -20,11 +22,11 @@ const input = ref<HTMLInputElement | null>(null)
 const confirming = ref(false)
 
 async function show() {
-  if (!props.fileId) {
+  if (!fileId.value) {
     src.value = null
     return
   }
-  src.value = await loadPhoto(props.fileId)
+  src.value = await loadPhoto(fileId.value)
 }
 
 async function onFile(event: Event) {
@@ -38,10 +40,10 @@ async function onFile(event: Event) {
   try {
     // Сжимаем до отправки: снимок с камеры весит в тридцать раз больше нужного
     const compressed = await compressImage(file)
-    const { fileId } = await uploadPhoto(props.beerKey, compressed.blob)
+    const { fileId: saved } = await uploadPhoto(props.name.trim().toLowerCase(), compressed.blob)
 
     src.value = URL.createObjectURL(compressed.blob)
-    emit('uploaded', fileId)
+    remember(props.name, saved)
   } catch (e) {
     failure.value = e instanceof Error ? e.message : 'снимок не загрузился'
   } finally {
@@ -51,7 +53,8 @@ async function onFile(event: Event) {
 }
 
 async function drop() {
-  if (!props.fileId) return
+  const current = fileId.value
+  if (!current) return
 
   if (!confirming.value) {
     confirming.value = true
@@ -64,9 +67,9 @@ async function drop() {
   failure.value = ''
 
   try {
-    await deletePhoto(props.fileId)
+    await deletePhoto(current)
     src.value = null
-    emit('removed')
+    forget(props.name)
   } catch (e) {
     failure.value = e instanceof Error ? e.message : 'снимок не удалился'
   } finally {
@@ -74,8 +77,13 @@ async function drop() {
   }
 }
 
-onMounted(show)
-watch(() => props.fileId, show)
+onMounted(async () => {
+  // Список снимков общий: store сам сходит за ним один раз на всё приложение
+  await load()
+  await show()
+})
+
+watch(fileId, show)
 </script>
 
 <template>

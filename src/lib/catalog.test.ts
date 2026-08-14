@@ -15,7 +15,7 @@ describe('buildCatalog', () => {
     expect(buildCatalog(entries).some((b) => !b.name)).toBe(false)
   })
 
-  it('склеивает один сорт при разном регистре', () => {
+  it('склеивает одно пиво при разном регистре', () => {
     const guinness = buildCatalog(entries).filter((b) => b.name.toLowerCase() === 'guinness')
     expect(guinness).toHaveLength(1)
     expect(guinness[0].times).toBe(2)

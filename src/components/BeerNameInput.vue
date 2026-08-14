@@ -7,13 +7,13 @@ import { styleColor } from '../lib/srm'
 const props = defineProps<{ modelValue: string; catalog: KnownBeer[] }>()
 const emit = defineEmits<{
   'update:modelValue': [value: string]
-  /** Выбран знакомый сорт — вместе с ним подставляются стиль и объём */
+  /** Выбрано знакомое пиво — вместе с ним подставляются стиль и объём */
   pick: [beer: KnownBeer]
 }>()
 
 const focused = ref(false)
 
-/** Подсказки прячем, когда введённое уже точно совпало с сортом */
+/** Подсказки прячем, когда введённое уже точно совпало с названием */
 const hints = computed(() => {
   if (!focused.value) return []
   const found = suggest(props.catalog, props.modelValue)

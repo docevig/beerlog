@@ -5,6 +5,7 @@ import EntryEditor from '../components/EntryEditor.vue'
 import { useEntries } from '../store/entries'
 import { useUi } from '../store/ui'
 import { useParty } from '../store/party'
+import { usePhotos } from '../store/photos'
 import { dayKey, todayKey } from '../lib/day'
 import { totalMl, totalAlcoholGrams } from '../lib/stats'
 import { formatLitres, formatDay, formatGrams, withPlural } from '../lib/format'
@@ -16,6 +17,13 @@ const { entries, remove, update, restore, importMany } = useEntries()
 const { takeFocusDay } = useUi()
 // Стол вечеринки повторяет судьбу отметки: иначе он расходится с дневником
 const { mirror, mirrorUpdate, mirrorRemove } = useParty()
+const { rename: renamePhoto, drop: dropPhoto } = usePhotos()
+
+/** Осталось ли в дневнике хоть одно упоминание названия, кроме записи id */
+function stillDrunk(name: string, exceptId?: string): boolean {
+  const key = name.trim().toLowerCase()
+  return entries.value.some((e) => e.id !== exceptId && (e.name ?? '').trim().toLowerCase() === key)
+}
 
 /**
  * Выгрузка и загрузка скрыты до появления экрана настроек: место в конце
@@ -110,7 +118,16 @@ function askRemove(id: string) {
   void mirrorRemove(id)
 
   clearTimeout(removalTimer)
-  removalTimer = setTimeout(() => (pendingRemoval.value = undefined), 5000)
+  removalTimer = setTimeout(() => {
+    const gone = pendingRemoval.value
+    pendingRemoval.value = undefined
+
+    /*
+      Этикетка уходит вместе с последней записью пива — но только когда
+      окно отмены закрылось: снимок нельзя вернуть, а удаление записи можно.
+    */
+    if (gone?.name && !stillDrunk(gone.name)) void dropPhoto(gone.name)
+  }, 5000)
 }
 
 async function undoRemove() {
@@ -134,11 +151,24 @@ async function applyEdit(patch: Partial<Entry>) {
   if (!editing.value) return
 
   const id = editing.value.id
+  const wasNamed = (editing.value.name ?? '').trim()
+
   await update(id, patch)
   editing.value = undefined
 
   const updated = entries.value.find((e) => e.id === id)
   if (updated) void mirrorUpdate(updated)
+
+  const named = (updated?.name ?? '').trim()
+
+  // Название не тронули — этикетке ничего не грозит
+  if (!wasNamed || wasNamed.toLowerCase() === named.toLowerCase()) return
+
+  // Старое название могло остаться в других записях: тогда этикетка нужна им
+  if (stillDrunk(wasNamed, id)) return
+
+  if (named) void renamePhoto(wasNamed, named)
+  else void dropPhoto(wasNamed)
 }
 </script>
 

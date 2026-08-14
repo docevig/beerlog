@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref } from 'vue'
 import type { Entry } from '../types'
 import LabelPhoto from './LabelPhoto.vue'
-import { apiAvailable, listPhotos } from '../lib/api'
 import { buildCatalog } from '../lib/catalog'
 import { styleTitle } from '../data/styles'
 import { styleColor, textOn } from '../lib/srm'
@@ -15,43 +14,12 @@ type Order = 'recent' | 'often' | 'rating'
 
 const order = ref<Order>('recent')
 
-/** Раскрытый сорт: там живёт этикетка */
+/** Раскрытое пиво: там живёт этикетка */
 const openName = ref<string | null>(null)
-
-/** Ключ сорта в нижнем регистре → идентификатор снимка */
-const photos = ref<Record<string, string>>({})
 
 function toggle(name: string) {
   openName.value = openName.value === name ? null : name
 }
-
-function photoOf(name: string): string | null {
-  return photos.value[name.toLowerCase()] ?? null
-}
-
-function remember(name: string, fileId: string) {
-  photos.value = { ...photos.value, [name.toLowerCase()]: fileId }
-}
-
-function forget(name: string) {
-  const next = { ...photos.value }
-  delete next[name.toLowerCase()]
-  photos.value = next
-}
-
-onMounted(async () => {
-  if (!apiAvailable()) return
-
-  try {
-    const { photos: known } = await listPhotos()
-    // Первый снимок сорта — самый свежий: список приходит отсортированным
-    const map: Record<string, string> = {}
-    for (const p of known) if (!map[p.beer_key]) map[p.beer_key] = p.file_id
-    photos.value = map
-  } catch {
-    // Без снимков экран остаётся рабочим
-  }
-})
 
 const beers = computed(() => {
   const list = buildCatalog(props.entries)
@@ -68,7 +36,7 @@ const beers = computed(() => {
 <template>
   <div v-if="beers.length" class="my-beers">
     <div class="head">
-      <div class="eyebrow">мои сорта · {{ beers.length }}</div>
+      <div class="eyebrow">моя коллекция · {{ beers.length }}</div>
       <div class="switch">
         <button type="button" :class="{ on: order === 'recent' }" @click="order = 'recent'">свежие</button>
         <button type="button" :class="{ on: order === 'often' }" @click="order = 'often'">частые</button>
@@ -94,18 +62,13 @@ const beers = computed(() => {
       </button>
 
       <div v-if="openName === beer.name" class="photo">
-        <LabelPhoto
-          :beer-key="beer.name.toLowerCase()"
-          :file-id="photoOf(beer.name)"
-          @uploaded="(id) => remember(beer.name, id)"
-          @removed="() => forget(beer.name)"
-        />
+        <LabelPhoto :name="beer.name" />
       </div>
     </div>
   </div>
 
   <p v-else class="empty">
-    сорта появятся, когда начнёшь записывать названия — в отметке они под «добавить подробности»
+    коллекция соберётся сама: назови пиво в отметке под «добавить подробности» — и оно появится здесь
   </p>
 </template>
 

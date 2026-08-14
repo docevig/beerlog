@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import ChoiceGrid, { type Choice } from '../components/ChoiceGrid.vue'
 import DayGlass from '../components/DayGlass.vue'
 import BeerNameInput from '../components/BeerNameInput.vue'
+import LabelPhoto from '../components/LabelPhoto.vue'
 import { buildCatalog, type KnownBeer } from '../lib/catalog'
 import { BEER_STYLES, VOLUME_PRESETS, findStyle, styleTitle } from '../data/styles'
 import { styleColor, textOn, subTextOn } from '../lib/srm'
@@ -71,10 +72,10 @@ const allStyleOptions = computed<Choice[]>(() => BEER_STYLES.map((s) => toChoice
 /** Что уже выпито сегодня — контекст, который помогает решить, наливать ли ещё */
 const todayEntries = computed(() => entries.value.filter((e) => dayKey(e.ts) === todayKey()))
 
-/** Справочник собственных сортов — источник подсказок при вводе названия */
+/** Своя коллекция — источник подсказок при вводе названия */
 const catalog = computed(() => buildCatalog(entries.value))
 
-/** Выбрали знакомый сорт: подставляем всё, что о нём известно */
+/** Выбрали знакомое пиво: подставляем всё, что о нём известно */
 function applyKnown(beer: KnownBeer) {
   style.value = beer.style
   customMl.value = undefined
@@ -232,6 +233,8 @@ async function save() {
         <input v-model.number="price" type="number" min="0" class="input" placeholder="цена" />
       </div>
       <input v-model="note" class="input" placeholder="заметка" />
+      <!-- Этикетка снимается прямо здесь: пиво уже названо, ходить за ней в коллекцию незачем -->
+      <LabelPhoto v-if="name.trim()" :name="name" />
       <label class="shift">
         <span>выпито минут назад</span>
         <input v-model.number="minutesAgo" type="number" min="0" class="input narrow" />
