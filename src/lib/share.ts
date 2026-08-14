@@ -1,13 +1,21 @@
 import type { Entry } from '../types'
-import { totalMl, distinctStyles, entryAbv } from './stats'
+import { totalMl, distinctStyles, entryAbv, styleBreakdown } from './stats'
 import { BEER_STYLES, findStyle, styleTitle } from '../data/styles'
 import { formatLitres, withPlural } from './format'
+import { styleColor } from './srm'
+import type { CardData } from './card'
 
 const APP_URL = 'https://t.me/beerlogs_bot/app'
 
 const MONTHS_IN = [
   'январе', 'феврале', 'марте', 'апреле', 'мае', 'июне',
   'июле', 'августе', 'сентябре', 'октябре', 'ноябре', 'декабре',
+]
+
+/** Именительный падеж — для подписи на карточке, где склонять нечего */
+const MONTHS = [
+  'январь', 'февраль', 'март', 'апрель', 'май', 'июнь',
+  'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь',
 ]
 
 /**
@@ -41,6 +49,38 @@ export function monthSummaryText(entries: Entry[], month: number): string {
     `стилей попробовано: ${styles} из ${BEER_STYLES.length}`,
     `самое тёмное — ${styleTitle(darkest).toLowerCase()}, самое крепкое — ${entryAbv(strongest).toString().replace('.', ',')}%`,
   ].join('\n')
+}
+
+/**
+ * Данные для карточки-картинки. Отдельно от текста: там готовые фразы,
+ * здесь — части, которые раскладываются по композиции.
+ */
+export function monthCardData(entries: Entry[], year: number, month: number): CardData {
+  const ml = totalMl(entries)
+
+  const shares = styleBreakdown(entries)
+    .slice(0, 6)
+    .map((s) => ({ title: styleTitle(s.style), share: s.share, color: styleColor(s.style) }))
+
+  // Средний цвет считаем по объёму, а не по числу кружек: литр стаута темнее бокала лагера
+  const weighted = entries.reduce((sum, e) => sum + (findStyle(e.style)?.srm ?? 0) * e.ml, 0)
+  const avgSrm = ml > 0 ? weighted / ml : 4
+
+  const strongest = entries.reduce((best, e) => (entryAbv(e) > entryAbv(best) ? e : best), entries[0])
+
+  return {
+    period: `${MONTHS[month - 1]} ${year}`,
+    litres: formatLitres(ml),
+    subtitle: `${withPlural(entries.length, 'кружка', 'кружки', 'кружек')} · ${withPlural(
+      distinctStyles(entries),
+      'стиль',
+      'стиля',
+      'стилей',
+    )}`,
+    shares,
+    footnote: `крепче всего — ${entryAbv(strongest).toString().replace('.', ',')}%`,
+    avgSrm,
+  }
 }
 
 /** Ссылка стандартного диалога «поделиться» в Telegram */

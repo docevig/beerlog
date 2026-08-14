@@ -249,6 +249,26 @@ export function listPhotos(): Promise<{ photos: { beer_key: string; file_id: str
   return request('/photos')
 }
 
+/** Отдаёт карточку боту и получает подготовленное сообщение для диалога «поделиться» */
+export async function prepareCard(blob: Blob): Promise<{ preparedMessageId: string }> {
+  const initData = tg()?.initData
+  if (!initData) throw new Error('доступно только внутри Telegram')
+
+  const response = await fetch(`${API_URL}/share-card`, {
+    method: 'POST',
+    body: blob,
+    headers: { 'content-type': blob.type, 'x-init-data': initData },
+    signal: AbortSignal.timeout(30_000),
+  })
+
+  if (!response.ok) {
+    const detail = (await response.json().catch(() => ({}))) as { error?: string }
+    throw new Error(detail.error ?? 'карточка не отправилась')
+  }
+
+  return (await response.json()) as { preparedMessageId: string }
+}
+
 /** Перевешивает снимок на другое название — при исправлении названия в записи */
 export function retagPhoto(fileId: string, beerKey: string): Promise<{ ok: boolean }> {
   return request(`/photos/${encodeURIComponent(fileId)}`, {

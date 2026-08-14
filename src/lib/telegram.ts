@@ -22,6 +22,11 @@ export interface TgWebApp {
     start_param?: string
     user?: { id: number; first_name?: string; photo_url?: string }
   }
+  /**
+   * Диалог выбора чата для сообщения, заранее подготовленного ботом.
+   * Появился в Bot API 8.0, поэтому версию проверяем перед вызовом.
+   */
+  shareMessage?(preparedMessageId: string, cb?: (sent: boolean) => void): void
   colorScheme: 'light' | 'dark'
   themeParams: Record<string, string>
   version: string
@@ -41,6 +46,9 @@ export function tg(): TgWebApp | undefined {
 
 /** Версия Bot API, в которой появился CloudStorage */
 export const CLOUD_STORAGE_SINCE = '6.9'
+
+/** Версия, начиная с которой мини-приложение умеет делиться сообщением */
+export const SHARE_MESSAGE_SINCE = '8.0'
 
 /**
  * Сравнивает версию WebApp с требуемой.

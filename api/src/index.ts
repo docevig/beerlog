@@ -376,6 +376,86 @@ async function getPhoto(ctx: Ctx, fileId: string): Promise<Response> {
   })
 }
 
+/** Карточка месяца рисуется в 1080 пикселей; больше сюда приехать не должно */
+const MAX_CARD_BYTES = 2_000_000
+
+/**
+ * Готовит карточку итогов к отправке в чат.
+ *
+ * Своей картинкой поделиться напрямую мини-приложение не может: Telegram
+ * отправляет только сообщение, заранее подготовленное ботом. Поэтому
+ * картинка сначала уезжает боту (так у неё появляется идентификатор),
+ * сообщение убирается из переписки, а идентификатор попадает
+ * в подготовленное сообщение, которое клиент и покажет в диалоге выбора чата.
+ */
+async function prepareCard(ctx: Ctx): Promise<Response> {
+  const type = ctx.request.headers.get('content-type') ?? ''
+  if (!type.startsWith('image/')) return json({ error: 'это не изображение' }, 415)
+
+  const bytes = await ctx.request.arrayBuffer()
+  if (bytes.byteLength === 0) return json({ error: 'пустая карточка' }, 400)
+  if (bytes.byteLength > MAX_CARD_BYTES) return json({ error: 'карточка слишком большая' }, 413)
+
+  const api = `https://api.telegram.org/bot${ctx.env.BOT_TOKEN}`
+
+  // Именно фотографией, а не документом: подготовленное сообщение ждёт фото
+  const form = new FormData()
+  form.append('chat_id', String(ctx.user.id))
+  form.append('disable_notification', 'true')
+  form.append('photo', new Blob([bytes], { type }), 'card.jpg')
+
+  const sent = (await (await fetch(`${api}/sendPhoto`, { method: 'POST', body: form })).json()) as {
+    ok: boolean
+    description?: string
+    result?: { message_id: number; photo?: { file_id: string }[] }
+  }
+
+  const photo = sent.result?.photo
+  const fileId = photo && photo.length ? photo[photo.length - 1].file_id : undefined
+
+  if (sent.result?.message_id) {
+    ctx.waitUntil(
+      fetch(`${api}/deleteMessage`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: ctx.user.id, message_id: sent.result.message_id }),
+      }).then(() => undefined),
+    )
+  }
+
+  if (!sent.ok || !fileId) {
+    log('карточку не удалось загрузить', { description: sent.description })
+    return json({ error: 'карточка не отправилась' }, 502)
+  }
+
+  const prepared = (await (
+    await fetch(`${api}/savePreparedInlineMessage`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        user_id: ctx.user.id,
+        result: {
+          type: 'photo',
+          id: crypto.randomUUID(),
+          photo_file_id: fileId,
+        },
+        // Куда разрешено пересылать: личные чаты и группы, каналы ни к чему
+        allow_user_chats: true,
+        allow_bot_chats: false,
+        allow_group_chats: true,
+        allow_channel_chats: false,
+      }),
+    })
+  ).json()) as { ok: boolean; description?: string; result?: { id: string } }
+
+  if (!prepared.ok || !prepared.result) {
+    log('подготовить сообщение не вышло', { description: prepared.description })
+    return json({ error: 'карточка не отправилась' }, 502)
+  }
+
+  return json({ preparedMessageId: prepared.result.id })
+}
+
 /**
  * Перевешивает снимок на другое название. Нужно при правке: человек
  * исправляет опечатку в названии, и этикетка должна уехать следом,
@@ -808,6 +888,7 @@ async function route(ctx: Ctx): Promise<Response> {
   const avatarPath = pathname.match(/^\/avatar\/(\d{1,20})$/)
   if (method === 'GET' && avatarPath) return avatar(ctx, Number(avatarPath[1]))
 
+  if (method === 'POST' && pathname === '/share-card') return prepareCard(ctx)
   if (method === 'POST' && pathname === '/photos') return uploadPhoto(ctx)
   if (method === 'GET' && pathname === '/photos') return listPhotos(ctx)
 

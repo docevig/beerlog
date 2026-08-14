@@ -25,8 +25,10 @@ import { achievements } from '../lib/achievements'
 import { dayKey, dayStart, todayKey } from '../lib/day'
 import { formatLitres, formatDay, formatGrams, withPlural } from '../lib/format'
 import { useCountUp } from '../lib/countUp'
-import { monthSummaryText, shareUrl } from '../lib/share'
-import { tg } from '../lib/telegram'
+import { monthSummaryText, shareUrl, monthCardData } from '../lib/share'
+import { drawMonthCard } from '../lib/card'
+import { prepareCard, apiAvailable } from '../lib/api'
+import { tg, isVersionAtLeast, SHARE_MESSAGE_SINCE } from '../lib/telegram'
 
 const { entries } = useEntries()
 const { goToDay } = useUi()
@@ -143,7 +145,10 @@ function openMonth(m: number) {
   period.value = 'month'
 }
 
-function shareMonth() {
+const sharing = ref(false)
+const shareFailure = ref('')
+
+function shareText() {
   const text = monthSummaryText(monthEntries.value, month.value)
   const url = shareUrl(text)
 
@@ -151,6 +156,36 @@ function shareMonth() {
   const app = tg()
   if (app) app.openTelegramLink(url)
   else window.open(url, '_blank')
+}
+
+/**
+ * Картинкой делимся, когда это умеет и клиент, и сервер. Всё остальное —
+ * старый Telegram, отсутствие сети — откатывается на текст: поделиться
+ * итогами человек должен смочь в любом случае.
+ */
+async function shareMonth() {
+  const app = tg()
+  const canShareImage =
+    app?.shareMessage && isVersionAtLeast(SHARE_MESSAGE_SINCE) && apiAvailable() && monthEntries.value.length > 0
+
+  if (!canShareImage) {
+    shareText()
+    return
+  }
+
+  sharing.value = true
+  shareFailure.value = ''
+
+  try {
+    const blob = await drawMonthCard(monthCardData(monthEntries.value, year.value, month.value))
+    const { preparedMessageId } = await prepareCard(blob)
+    app!.shareMessage!(preparedMessageId)
+  } catch {
+    shareFailure.value = 'картинка не собралась, отправляем текстом'
+    shareText()
+  } finally {
+    sharing.value = false
+  }
 }
 </script>
 
@@ -303,9 +338,10 @@ function shareMonth() {
         <MyBeers :entries="entries" />
       </div>
 
-      <button v-if="period === 'month'" type="button" class="share" @click="shareMonth">
-        поделиться итогами месяца
+      <button v-if="period === 'month'" type="button" class="share" :disabled="sharing" @click="shareMonth">
+        {{ sharing ? 'рисуем карточку…' : 'поделиться итогами месяца' }}
       </button>
+      <p v-if="shareFailure" class="hint">{{ shareFailure }}</p>
 
       <div v-if="badges.length" class="block">
         <div class="eyebrow">достижения</div>
