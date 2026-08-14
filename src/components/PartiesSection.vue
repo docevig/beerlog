@@ -193,11 +193,17 @@ function partyDay(p: PartySummary): string {
   return formatDay(dayKey(p.started_at))
 }
 
+/** Короткий вечер должен читаться минутами, а не «0 ч» */
+function humanDuration(ms: number): string {
+  const minutes = Math.max(0, Math.round(ms / 60000))
+  const hours = Math.floor(minutes / 60)
+  if (hours === 0) return `${minutes} мин`
+  return minutes % 60 === 0 ? `${hours} ч` : `${hours} ч ${minutes % 60} мин`
+}
+
 function partyDuration(p: PartySummary): string {
   if (!p.ended_at) return ''
-  const minutes = Math.round((p.ended_at - p.started_at) / 60000)
-  const hours = Math.floor(minutes / 60)
-  return hours === 0 ? `${minutes} мин` : `${hours} ч ${minutes % 60} мин`
+  return humanDuration(p.ended_at - p.started_at)
 }
 
 onMounted(load)
@@ -224,10 +230,11 @@ onMounted(load)
       <div class="eyebrow">вместе</div>
       <div class="figure evenings">{{ withPlural(stats.evenings, 'вечер', 'вечера', 'вечеров') }}</div>
 
+      <!-- Без предлога: «с Игорь» требует падежа, а склонять имена ненадёжно -->
       <div v-if="stats.companions.length" class="line">
-        чаще всего с
+        чаще всего:
         <span v-for="(c, i) in stats.companions" :key="c.name">
-          {{ i > 0 ? ', ' : '' }}{{ c.name }} ({{ c.evenings }})
+          {{ i > 0 ? ', ' : '' }}{{ c.name }} — {{ withPlural(c.evenings, 'вечер', 'вечера', 'вечеров') }}
         </span>
       </div>
 
@@ -239,7 +246,7 @@ onMounted(load)
       </div>
 
       <div v-if="stats.longest" class="line dim">
-        самый долгий вечер — {{ Math.round(stats.longest.duration / 3600000) }} ч,
+        самый долгий вечер — {{ humanDuration(stats.longest.duration) }},
         {{ formatDay(dayKey(stats.longest.started_at)) }}
       </div>
       <div v-if="stats.crowded && stats.crowded.members > 2" class="line dim">

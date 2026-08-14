@@ -18,7 +18,7 @@ import { formatLitres, formatDay, withPlural } from '../lib/format'
 import { tg } from '../lib/telegram'
 import PartiesSection from '../components/PartiesSection.vue'
 
-const { entries } = useEntries()
+const { entries, profile, saveProfile } = useEntries()
 
 const isDev = import.meta.env.DEV
 const friends = ref<FriendTotals[]>([])
@@ -276,6 +276,32 @@ function freshness(friend: FriendTotals): string {
   return `обновлено ${formatDay(dayKey(friend.updated_at))}`
 }
 
+/** Имя, под которым ты сам подписал человека, иначе — из его профиля */
+function displayName(friend: FriendTotals): string {
+  return profile.value.friendNames?.[String(friend.tg_id)] || friend.name
+}
+
+const renamingId = ref<number | null>(null)
+const draftName = ref('')
+
+function startRename(friend: FriendTotals) {
+  renamingId.value = friend.tg_id
+  draftName.value = displayName(friend)
+}
+
+async function saveName(friend: FriendTotals) {
+  const next = draftName.value.trim()
+  const names = { ...(profile.value.friendNames ?? {}) }
+
+  // Пустое имя — возврат к тому, как человек назвался сам
+  if (next && next !== friend.name) names[String(friend.tg_id)] = next
+  else delete names[String(friend.tg_id)]
+
+  profile.value = { ...profile.value, friendNames: names }
+  await saveProfile()
+  renamingId.value = null
+}
+
 async function unfriend(friend: FriendTotals) {
   try {
     await removeFriendApi(friend.tg_id)
@@ -343,7 +369,7 @@ function tasteHint(friend: FriendTotals): string {
               <span v-else class="initial">{{ initial(f.name) }}</span>
             </span>
             <span class="friend-body">
-              <span class="friend-name">{{ f.name }}</span>
+              <span class="friend-name">{{ displayName(f) }}</span>
               <span class="friend-numbers">
                 {{ withPlural(f.styles, 'стиль', 'стиля', 'стилей') }} · {{ formatLitres(f.ml) }}
               </span>
@@ -398,7 +424,15 @@ function tasteHint(friend: FriendTotals): string {
                 <span class="stale">{{ freshness(f) }}</span>
               </div>
 
-              <button type="button" class="unfriend" @click="unfriend(f)">убрать из компании</button>
+              <div v-if="renamingId === f.tg_id" class="rename">
+                <input v-model="draftName" class="rename-input" :placeholder="f.name" @keyup.enter="saveName(f)" />
+                <button type="button" class="rename-save" @click="saveName(f)">сохранить</button>
+              </div>
+
+              <div class="row-actions">
+                <button type="button" class="minor" @click="startRename(f)">переименовать</button>
+                <button type="button" class="minor" @click="unfriend(f)">убрать из компании</button>
+              </div>
             </div>
           </Transition>
         </div>
@@ -559,9 +593,12 @@ function tasteHint(friend: FriendTotals): string {
 .stale {
   color: var(--text-faint);
 }
-.unfriend {
-  align-self: flex-start;
-  margin-top: 4px;
+.row-actions {
+  display: flex;
+  gap: 16px;
+  margin-top: 6px;
+}
+.minor {
   padding: 0;
   border: 0;
   background: none;
@@ -569,6 +606,32 @@ function tasteHint(friend: FriendTotals): string {
   font: inherit;
   font-size: 12px;
   text-decoration: underline;
+  cursor: pointer;
+}
+/* Имя, под которым ты подписал человека у себя — на сервер не уезжает */
+.rename {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.rename-input {
+  flex: 1;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.rename-save {
+  padding: 7px 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--accent-bright);
+  font: inherit;
+  font-size: 13px;
   cursor: pointer;
 }
 .period {
