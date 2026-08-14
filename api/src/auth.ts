@@ -39,7 +39,19 @@ async function equalsSafely(a: string, b: string): Promise<boolean> {
     crypto.subtle.digest('SHA-256', encoder.encode(a)),
     crypto.subtle.digest('SHA-256', encoder.encode(b)),
   ])
-  return crypto.subtle.timingSafeEqual(left, right)
+
+  const subtle = crypto.subtle as SubtleCrypto & {
+    timingSafeEqual?: (a: ArrayBuffer, b: ArrayBuffer) => boolean
+  }
+
+  if (typeof subtle.timingSafeEqual === 'function') return subtle.timingSafeEqual(left, right)
+
+  // Вне Workers такого расширения нет — сравниваем сами, тоже за постоянное время
+  const x = new Uint8Array(left)
+  const y = new Uint8Array(right)
+  let diff = x.length ^ y.length
+  for (let i = 0; i < Math.min(x.length, y.length); i++) diff |= x[i] ^ y[i]
+  return diff === 0
 }
 
 /**
@@ -65,6 +77,25 @@ export interface VerifyResult {
   details?: Record<string, unknown>
 }
 
+/**
+ * Подпись по схеме Telegram: секрет — HMAC от токена бота с ключом
+ * «WebAppData», подпись — HMAC от строки проверки этим секретом.
+ * Вынесено отдельно, чтобы сверять с эталоном в тестах.
+ */
+export async function computeHash(checkString: string, botToken: string): Promise<string> {
+  const secret = await hmac(encoder.encode('WebAppData'), botToken)
+  return toHex(await hmac(secret, checkString))
+}
+
+/** Строка проверки: все поля кроме hash и signature, по алфавиту */
+export function buildCheckString(pairs: Map<string, string>): string {
+  return [...pairs.entries()]
+    .filter(([key]) => key !== 'hash' && key !== 'signature')
+    .map(([key, value]) => `${key}=${value}`)
+    .sort()
+    .join('\n')
+}
+
 /** Токен бота выглядит как «1234567890:AA...» — проверяем форму, не значение */
 function looksLikeToken(token: string): boolean {
   return /^\d{6,}:[A-Za-z0-9_-]{30,}$/.test(token)
@@ -81,45 +112,59 @@ export async function verifyInitDataDetailed(initData: string, botToken: string)
     }
   }
 
-  const params = new URLSearchParams(initData)
-  const providedHash = params.get('hash')
-  if (!providedHash) return { ok: false, reason: 'no-hash', details: { keys: [...params.keys()] } }
+  /*
+    Разбираем вручную, а не через URLSearchParams: тот трактует «+» как
+    пробел, и любое значение с плюсом ломало бы подпись. Telegram кодирует
+    initData через encodeURIComponent, поэтому decodeURIComponent точен.
+  */
+  const pairs = new Map<string, string>()
+  for (const chunk of initData.split('&')) {
+    const eq = chunk.indexOf('=')
+    if (eq === -1) continue
+    const key = chunk.slice(0, eq)
+    const raw = chunk.slice(eq + 1)
+    try {
+      pairs.set(key, decodeURIComponent(raw))
+    } catch {
+      pairs.set(key, raw)
+    }
+  }
 
-  params.delete('hash')
-  // Signature относится к третьесторонней проверке Ed25519 и в строку не входит
-  params.delete('signature')
+  const receivedKeys = [...pairs.keys()]
+  const providedHash = pairs.get('hash')
+  if (!providedHash) return { ok: false, reason: 'no-hash', details: { keys: receivedKeys } }
 
-  const checkString = [...params.entries()]
-    .map(([key, value]) => `${key}=${value}`)
-    .sort()
-    .join('\n')
+  // hash и signature в строку проверки не входят — это подписи, а не данные
+  const checkString = buildCheckString(pairs)
+  const signedKeys = [...pairs.keys()].filter((k) => k !== 'hash' && k !== 'signature')
 
-  const secret = await hmac(encoder.encode('WebAppData'), botToken)
-  const expected = toHex(await hmac(secret, checkString))
+  const expected = await computeHash(checkString, botToken)
 
   if (!(await equalsSafely(expected, providedHash))) {
     return {
       ok: false,
       reason: 'hash-mismatch',
       details: {
-        keys: [...params.keys()],
+        // Полный список полей, как пришёл: покажет, есть ли signature,
+        // который мы исключаем из строки проверки
+        receivedKeys,
+        signedKeys,
         expectedTail: expected.slice(-6),
         providedTail: providedHash.slice(-6),
-        // Часть токена до двоеточия — публичный id бота, не секрет.
-        // По нему видно, от того ли бота лежит токен в секрете.
+        // Часть токена до двоеточия — публичный id бота, не секрет
         tokenBotId: botToken.split(':')[0],
         checkStringLength: checkString.length,
       },
     }
   }
 
-  const authDate = Number(params.get('auth_date'))
+  const authDate = Number(pairs.get('auth_date'))
   if (!Number.isFinite(authDate)) return { ok: false, reason: 'stale' }
 
   const age = Math.floor(Date.now() / 1000) - authDate
   if (age > MAX_AGE_SECONDS) return { ok: false, reason: 'stale', details: { ageSeconds: age } }
 
-  const rawUser = params.get('user')
+  const rawUser = pairs.get('user')
   if (!rawUser) return { ok: false, reason: 'no-user' }
 
   let parsed: { id?: number; first_name?: string; last_name?: string; username?: string; photo_url?: string }
@@ -140,7 +185,7 @@ export async function verifyInitDataDetailed(initData: string, botToken: string)
     ok: true,
     data: {
       user: { id: parsed.id, name, photoUrl: parsed.photo_url },
-      startParam: params.get('start_param') ?? undefined,
+      startParam: pairs.get('start_param') ?? undefined,
     },
   }
 }
