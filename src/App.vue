@@ -293,6 +293,7 @@ onMounted(async () => {
 .topbar {
   display: flex;
   justify-content: flex-end;
+  gap: 10px;
   padding: 6px 12px 0;
 }
 .help {
