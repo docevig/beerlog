@@ -14,6 +14,13 @@ import type { Entry } from '../types'
 const { entries, remove, update, restore, importMany } = useEntries()
 const { takeFocusDay } = useUi()
 
+/**
+ * Выгрузка и загрузка скрыты до появления экрана настроек: место в конце
+ * ленты было неудачным — при длинной истории до кнопок не долистать.
+ * Код оставлен рабочим, включается этим флагом.
+ */
+const SHOW_TRANSFER = false
+
 const fileInput = ref<HTMLInputElement | null>(null)
 const importReport = ref('')
 
@@ -136,7 +143,7 @@ async function applyEdit(patch: Partial<Entry>) {
         <div class="eyebrow">сегодня</div>
         <div class="figure summary-value">{{ formatLitres(totalMl(today)) }}</div>
         <div class="summary-sub">
-          {{ withPlural(today.length, 'порция', 'порции', 'порций') }} ·
+          {{ withPlural(today.length, 'кружка', 'кружки', 'кружек') }} ·
           {{ formatGrams(totalAlcoholGrams(today)) }} спирта
         </div>
       </div>
@@ -165,7 +172,7 @@ async function applyEdit(patch: Partial<Entry>) {
         </TransitionGroup>
       </div>
 
-      <div class="transfer">
+      <div v-if="SHOW_TRANSFER" class="transfer">
         <button type="button" class="link" @click="exportEntries(entries)">выгрузить в файл</button>
         <button type="button" class="link" @click="pickFile">загрузить из файла</button>
         <input ref="fileInput" type="file" accept="application/json,.json" class="hidden" @change="onFile" />

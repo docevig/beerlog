@@ -3,25 +3,29 @@ import { ref, onMounted, computed, watch } from 'vue'
 import AddView from './views/AddView.vue'
 import HistoryView from './views/HistoryView.vue'
 import StatsView from './views/StatsView.vue'
+import FriendsView from './views/FriendsView.vue'
 import Bubbles from './components/Bubbles.vue'
 import { createStore } from './storage'
 import { ensureMeta } from './storage/meta'
 import { useEntries } from './store/entries'
 import { useUi } from './store/ui'
 import { tg } from './lib/telegram'
+import { acceptInvite, apiAvailable } from './lib/api'
 
-type Tab = 'add' | 'history' | 'stats'
+type Tab = 'add' | 'history' | 'stats' | 'friends'
 
 const TABS: { id: Tab; title: string }[] = [
   { id: 'add', title: 'отметить' },
   { id: 'history', title: 'история' },
-  { id: 'stats', title: 'статистика' },
+  { id: 'stats', title: 'итоги' },
+  { id: 'friends', title: 'компания' },
 ]
 
 const tab = ref<Tab>('add')
 const synced = ref(true)
 const ready = ref(false)
 const failure = ref('')
+const invited = ref('')
 
 const { load } = useEntries()
 const { focusDay } = useUi()
@@ -34,6 +38,7 @@ watch(focusDay, (day) => {
 const currentView = computed(() => {
   if (tab.value === 'add') return AddView
   if (tab.value === 'history') return HistoryView
+  if (tab.value === 'friends') return FriendsView
   return StatsView
 })
 
@@ -54,6 +59,19 @@ onMounted(async () => {
   } finally {
     ready.value = true
   }
+
+  // Пришли по ссылке-приглашению: принимаем её и показываем компанию
+  const code = app?.initDataUnsafe?.start_param
+  if (code && apiAvailable()) {
+    try {
+      await acceptInvite(code)
+      invited.value = 'приглашение принято'
+    } catch (e) {
+      invited.value = e instanceof Error ? e.message : 'приглашение не сработало'
+    }
+    tab.value = 'friends'
+    setTimeout(() => (invited.value = ''), 5000)
+  }
 })
 </script>
 
@@ -61,6 +79,7 @@ onMounted(async () => {
   <div class="app">
     <p v-if="!synced" class="warning">данные хранятся только на этом устройстве</p>
     <p v-if="failure" class="warning">хранилище недоступно: {{ failure }}</p>
+    <p v-if="invited" class="warning accent">{{ invited }}</p>
 
     <main class="content">
       <Bubbles v-if="tab === 'add'" />
@@ -112,6 +131,9 @@ onMounted(async () => {
   color: var(--text-faint);
   font-size: 14px;
 }
+.accent {
+  color: var(--accent-bright);
+}
 .tabs {
   position: fixed;
   left: 0;
@@ -119,7 +141,7 @@ onMounted(async () => {
   bottom: 0;
   z-index: 2;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   border-top: 1px solid var(--line);
   background: var(--bg);
 }

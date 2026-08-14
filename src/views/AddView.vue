@@ -8,8 +8,10 @@ import { formatAbv, formatPortion } from '../lib/format'
 import { dayKey, todayKey } from '../lib/day'
 import { overflowRatio } from '../lib/foam'
 import { useEntries } from '../store/entries'
+import { useParty } from '../store/party'
 
 const { entries, profile, add } = useEntries()
+const { active: activeParty, mirror } = useParty()
 
 const ml = ref<number>(profile.value.lastMl ?? 500)
 const style = ref<string>(profile.value.lastStyle ?? 'lager')
@@ -145,7 +147,7 @@ async function save() {
   ]
   void timers
 
-  await add({
+  const created = await add({
     ts: Date.now() - minutesAgo.value * 60_000,
     ml: effectiveMl,
     style: style.value,
@@ -156,6 +158,9 @@ async function save() {
     rating: rating.value,
     price: price.value,
   })
+
+  // Если сейчас идёт вечеринка, та же отметка появляется и на общем столе
+  void mirror(created)
 
   justSaved.value = `${styleTitle(style.value)} ${formatPortion(effectiveMl)}`
 
@@ -174,6 +179,11 @@ async function save() {
 
 <template>
   <section class="view">
+    <!-- Идёт общий вечер: пусть будет видно, что запись уходит ещё и на стол -->
+    <div v-if="activeParty" class="party-banner">
+      сейчас вечеринка — отметки видит вся компания
+    </div>
+
     <div class="block">
       <div class="eyebrow">объём</div>
       <ChoiceGrid :options="volumeOptions" :model-value="customMl ? -1 : ml" @update:model-value="pickVolume" :columns="4" />
@@ -257,6 +267,13 @@ async function save() {
   gap: 16px;
   padding: 16px 16px 0;
   min-height: calc(100vh - 116px);
+}
+.party-banner {
+  padding: 8px 11px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  color: var(--accent-bright);
+  font-size: 12px;
 }
 .block {
   display: flex;

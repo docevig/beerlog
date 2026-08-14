@@ -6,7 +6,7 @@ const ALLOWED_ORIGIN = 'https://docevig.github.io'
 /** Приглашение живёт сутки: утёкшая в чужой чат ссылка протухает сама */
 const INVITE_TTL_MS = 24 * 60 * 60 * 1000
 
-/** Заброшенная попойка закрывается сама, чтобы не висеть активной вечно */
+/** Заброшенная вечеринка закрывается сама, чтобы не висеть активной вечно */
 const PARTY_IDLE_MS = 12 * 60 * 60 * 1000
 
 interface Ctx {
@@ -55,18 +55,36 @@ async function syncTotals(ctx: Ctx): Promise<Response> {
     portions?: number
     styles?: number
     avgSrm?: number
+    stylesList?: string[]
+    stylesFirst?: Record<string, number>
   }
 
   if (!body.period || !/^\d{4}-\d{2}$/.test(body.period)) {
     return json({ error: 'период должен быть в формате YYYY-MM' }, 400)
   }
 
+  // Коды стилей: чужие строки в витрину не пускаем, длину ограничиваем
+  const stylesList = Array.isArray(body.stylesList)
+    ? body.stylesList.filter((s) => typeof s === 'string' && /^[a-z_]{1,24}$/.test(s)).slice(0, 40)
+    : []
+
+  // Даты первого раза: только известные коды и разумные времена
+  const stylesFirst: Record<string, number> = {}
+  if (body.stylesFirst && typeof body.stylesFirst === 'object') {
+    for (const [code, ts] of Object.entries(body.stylesFirst)) {
+      if (/^[a-z_]{1,24}$/.test(code) && typeof ts === 'number' && Number.isFinite(ts)) {
+        stylesFirst[code] = Math.round(ts)
+      }
+    }
+  }
+
   await ctx.env.DB.prepare(
-    `INSERT INTO totals (tg_id, period, ml, portions, styles, avg_srm, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO totals (tg_id, period, ml, portions, styles, avg_srm, styles_list, styles_first, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (tg_id, period) DO UPDATE SET
        ml = excluded.ml, portions = excluded.portions, styles = excluded.styles,
-       avg_srm = excluded.avg_srm, updated_at = excluded.updated_at`,
+       avg_srm = excluded.avg_srm, styles_list = excluded.styles_list,
+       styles_first = excluded.styles_first, updated_at = excluded.updated_at`,
   )
     .bind(
       ctx.user.id,
@@ -75,6 +93,8 @@ async function syncTotals(ctx: Ctx): Promise<Response> {
       Math.max(0, Math.round(body.portions ?? 0)),
       Math.max(0, Math.round(body.styles ?? 0)),
       body.avgSrm ?? 0,
+      JSON.stringify(stylesList),
+      JSON.stringify(stylesFirst),
       Date.now(),
     )
     .run()
@@ -84,27 +104,82 @@ async function syncTotals(ctx: Ctx): Promise<Response> {
 
 async function listFriends(ctx: Ctx): Promise<Response> {
   const period = ctx.url.searchParams.get('period') ?? ''
-  if (!/^\d{4}-\d{2}$/.test(period)) {
-    return json({ error: 'период должен быть в формате YYYY-MM' }, 400)
+  const allTime = period === 'all'
+
+  if (!allTime && !/^\d{4}-\d{2}$/.test(period)) {
+    return json({ error: 'период должен быть YYYY-MM или all' }, 400)
   }
 
-  const { results } = await ctx.env.DB.prepare(
-    `SELECT u.tg_id, u.name, u.photo_url,
-            COALESCE(t.ml, 0) AS ml,
-            COALESCE(t.portions, 0) AS portions,
-            COALESCE(t.styles, 0) AS styles,
-            COALESCE(t.avg_srm, 0) AS avg_srm
-       FROM friendships f
-       JOIN users u
-         ON u.tg_id = CASE WHEN f.low_id = ?1 THEN f.high_id ELSE f.low_id END
-       LEFT JOIN totals t ON t.tg_id = u.tg_id AND t.period = ?2
-      WHERE f.low_id = ?1 OR f.high_id = ?1
-      ORDER BY ml DESC`,
-  )
-    .bind(ctx.user.id, period)
-    .all()
+  /*
+    Общее для обоих режимов: к каждому другу цепляем, сколько вечеров вы
+    провели вместе и когда виделись в последний раз — это про отношения,
+    и в интерфейсе стоит выше любых литров.
+  */
+  const shared = `
+    LEFT JOIN (
+      SELECT theirs.tg_id AS friend_id,
+             COUNT(*) AS evenings,
+             MAX(p.started_at) AS last_evening
+        FROM party_members mine
+        JOIN party_members theirs
+          ON theirs.party_id = mine.party_id AND theirs.tg_id != mine.tg_id
+        JOIN parties p ON p.id = mine.party_id
+       WHERE mine.tg_id = ?1
+       GROUP BY theirs.tg_id
+    ) ev ON ev.friend_id = u.tg_id`
 
+  // За всё время суммируем месяцы; список стилей склеиваем на клиенте
+  const query = allTime
+    ? `SELECT u.tg_id, u.name, u.photo_url,
+              COALESCE(SUM(t.ml), 0) AS ml,
+              COALESCE(SUM(t.portions), 0) AS portions,
+              COALESCE(MAX(t.styles), 0) AS styles,
+              COALESCE(AVG(NULLIF(t.avg_srm, 0)), 0) AS avg_srm,
+              COALESCE(GROUP_CONCAT(t.styles_list, '|'), '') AS styles_list,
+              COALESCE(MAX(t.updated_at), 0) AS updated_at,
+              COALESCE(MAX(ev.evenings), 0) AS evenings,
+              COALESCE(MAX(ev.last_evening), 0) AS last_evening
+         FROM friendships f
+         JOIN users u
+           ON u.tg_id = CASE WHEN f.low_id = ?1 THEN f.high_id ELSE f.low_id END
+         LEFT JOIN totals t ON t.tg_id = u.tg_id
+         ${shared}
+        WHERE f.low_id = ?1 OR f.high_id = ?1
+        GROUP BY u.tg_id`
+    : `SELECT u.tg_id, u.name, u.photo_url,
+              COALESCE(t.ml, 0) AS ml,
+              COALESCE(t.portions, 0) AS portions,
+              COALESCE(t.styles, 0) AS styles,
+              COALESCE(t.avg_srm, 0) AS avg_srm,
+              COALESCE(t.styles_list, '[]') AS styles_list,
+              COALESCE(t.styles_first, '{}') AS styles_first,
+              COALESCE(t.updated_at, 0) AS updated_at,
+              COALESCE(ev.evenings, 0) AS evenings,
+              COALESCE(ev.last_evening, 0) AS last_evening
+         FROM friendships f
+         JOIN users u
+           ON u.tg_id = CASE WHEN f.low_id = ?1 THEN f.high_id ELSE f.low_id END
+         LEFT JOIN totals t ON t.tg_id = u.tg_id AND t.period = ?2
+         ${shared}
+        WHERE f.low_id = ?1 OR f.high_id = ?1`
+
+  const statement = allTime
+    ? ctx.env.DB.prepare(query).bind(ctx.user.id)
+    : ctx.env.DB.prepare(query).bind(ctx.user.id, period)
+
+  const { results } = await statement.all()
   return json({ friends: results })
+}
+
+/** Дружба рвётся с обеих сторон сразу: односторонней она не бывает */
+async function removeFriend(ctx: Ctx, friendId: number): Promise<Response> {
+  const [low, high] = pair(ctx.user.id, friendId)
+
+  await ctx.env.DB.prepare(`DELETE FROM friendships WHERE low_id = ? AND high_id = ?`)
+    .bind(low, high)
+    .run()
+
+  return json({ ok: true })
 }
 
 async function createInvite(ctx: Ctx): Promise<Response> {
@@ -112,7 +187,7 @@ async function createInvite(ctx: Ctx): Promise<Response> {
   const kind = body.kind === 'party' ? 'party' : 'friend'
 
   if (kind === 'party' && !body.partyId) {
-    return json({ error: 'для приглашения в попойку нужен её идентификатор' }, 400)
+    return json({ error: 'для приглашения в вечеринку нужен её идентификатор' }, 400)
   }
 
   // Код должен быть непредсказуемым: по нему открывается доступ к статистике
@@ -200,7 +275,7 @@ async function addPartyEntry(ctx: Ctx, partyId: string): Promise<Response> {
     .bind(partyId)
     .first<{ ended_at: number | null }>()
 
-  if (!party) return json({ error: 'попойка не найдена' }, 404)
+  if (!party) return json({ error: 'вечеринка не найдена' }, 404)
   if (party.ended_at !== null) return json({ error: 'вечер уже закрыт' }, 409)
 
   const body = (await ctx.request.json()) as { id?: string; ts?: number; ml?: number; style?: string; name?: string }
@@ -233,7 +308,7 @@ async function getParty(ctx: Ctx, partyId: string): Promise<Response> {
     .bind(partyId)
     .first()
 
-  if (!party) return json({ error: 'попойка не найдена' }, 404)
+  if (!party) return json({ error: 'вечеринка не найдена' }, 404)
 
   const [members, entries] = await Promise.all([
     ctx.env.DB.prepare(
@@ -249,12 +324,89 @@ async function getParty(ctx: Ctx, partyId: string): Promise<Response> {
   return json({ party, members: members.results, entries: entries.results })
 }
 
+/** Список вечеринок: активная сверху, остальные — свежими вперёд */
+async function listParties(ctx: Ctx): Promise<Response> {
+  const { results } = await ctx.env.DB.prepare(
+    `SELECT p.id, p.title, p.host_id, p.started_at, p.ended_at,
+            (SELECT COUNT(*) FROM party_members m2 WHERE m2.party_id = p.id) AS members,
+            COALESCE((SELECT SUM(e.ml) FROM party_entries e WHERE e.party_id = p.id), 0) AS ml,
+            COALESCE((SELECT COUNT(*) FROM party_entries e WHERE e.party_id = p.id), 0) AS portions
+       FROM parties p
+       JOIN party_members m ON m.party_id = p.id AND m.tg_id = ?
+      ORDER BY (p.ended_at IS NULL) DESC, p.started_at DESC
+      LIMIT 50`,
+  )
+    .bind(ctx.user.id)
+    .all()
+
+  return json({ parties: results })
+}
+
+/**
+ * Итоги по вечеринкам считаем про ВСТРЕЧИ, а не про объёмы:
+ * сколько раз собирались, с кем чаще, что берут в этой компании.
+ * Рекорды — по длительности и людям за столом, но не по выпитому.
+ */
+async function partyStats(ctx: Ctx): Promise<Response> {
+  const [totals, companions, styles, longest, crowded] = await ctx.env.DB.batch([
+    ctx.env.DB.prepare(
+      `SELECT COUNT(*) AS evenings FROM party_members WHERE tg_id = ?`,
+    ).bind(ctx.user.id),
+
+    ctx.env.DB.prepare(
+      `SELECT u.name, COUNT(*) AS evenings
+         FROM party_members mine
+         JOIN party_members theirs ON theirs.party_id = mine.party_id AND theirs.tg_id != mine.tg_id
+         JOIN users u ON u.tg_id = theirs.tg_id
+        WHERE mine.tg_id = ?
+        GROUP BY theirs.tg_id
+        ORDER BY evenings DESC
+        LIMIT 3`,
+    ).bind(ctx.user.id),
+
+    ctx.env.DB.prepare(
+      `SELECT e.style, COUNT(*) AS times
+         FROM party_entries e
+         JOIN party_members m ON m.party_id = e.party_id AND m.tg_id = ?
+        GROUP BY e.style
+        ORDER BY times DESC
+        LIMIT 3`,
+    ).bind(ctx.user.id),
+
+    ctx.env.DB.prepare(
+      `SELECT p.id, p.started_at, p.ended_at, (p.ended_at - p.started_at) AS duration
+         FROM parties p
+         JOIN party_members m ON m.party_id = p.id AND m.tg_id = ?
+        WHERE p.ended_at IS NOT NULL
+        ORDER BY duration DESC
+        LIMIT 1`,
+    ).bind(ctx.user.id),
+
+    ctx.env.DB.prepare(
+      `SELECT p.id, p.started_at,
+              (SELECT COUNT(*) FROM party_members m2 WHERE m2.party_id = p.id) AS members
+         FROM parties p
+         JOIN party_members m ON m.party_id = p.id AND m.tg_id = ?
+        ORDER BY members DESC
+        LIMIT 1`,
+    ).bind(ctx.user.id),
+  ])
+
+  return json({
+    evenings: (totals.results[0] as { evenings: number } | undefined)?.evenings ?? 0,
+    companions: companions.results,
+    styles: styles.results,
+    longest: longest.results[0] ?? null,
+    crowded: crowded.results[0] ?? null,
+  })
+}
+
 async function closeParty(ctx: Ctx, partyId: string): Promise<Response> {
   const party = await ctx.env.DB.prepare(`SELECT host_id, ended_at FROM parties WHERE id = ?`)
     .bind(partyId)
     .first<{ host_id: number; ended_at: number | null }>()
 
-  if (!party) return json({ error: 'попойка не найдена' }, 404)
+  if (!party) return json({ error: 'вечеринка не найдена' }, 404)
   if (party.host_id !== ctx.user.id) return json({ error: 'закрыть вечер может только тот, кто его начал' }, 403)
 
   await ctx.env.DB.prepare(`UPDATE parties SET ended_at = ? WHERE id = ? AND ended_at IS NULL`)
@@ -272,6 +424,11 @@ async function route(ctx: Ctx): Promise<Response> {
   if (method === 'GET' && pathname === '/friends') return listFriends(ctx)
   if (method === 'POST' && pathname === '/invites') return createInvite(ctx)
   if (method === 'POST' && pathname === '/parties') return createParty(ctx)
+  if (method === 'GET' && pathname === '/parties') return listParties(ctx)
+  if (method === 'GET' && pathname === '/parties/stats') return partyStats(ctx)
+
+  const friend = pathname.match(/^\/friends\/(\d{1,20})$/)
+  if (method === 'DELETE' && friend) return removeFriend(ctx, Number(friend[1]))
 
   const accept = pathname.match(/^\/invites\/([A-Za-z0-9_-]{1,64})\/accept$/)
   if (method === 'POST' && accept) return acceptInvite(ctx, accept[1])
@@ -330,6 +487,6 @@ export default {
       .bind(Date.now(), cutoff)
       .run()
 
-    log('закрыты заброшенные попойки', { count: result.meta.changes })
+    log('закрыты заброшенные вечеринки', { count: result.meta.changes })
   },
 }

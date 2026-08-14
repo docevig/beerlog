@@ -11,7 +11,17 @@ export interface TgWebApp {
   expand(): void
   onEvent(event: string, cb: () => void): void
   openTelegramLink(url: string): void
-  initDataUnsafe?: { start_param?: string }
+  /** Подписанная строка для сервера; передаётся как есть, разбирает её Worker */
+  initData?: string
+  /**
+   * Неподписанная копия данных. Годится только для оформления —
+   * отличить «меня» от других в списке. Для доступа к чужим данным
+   * сервер всегда проверяет подпись сам.
+   */
+  initDataUnsafe?: {
+    start_param?: string
+    user?: { id: number; first_name?: string; photo_url?: string }
+  }
   colorScheme: 'light' | 'dark'
   themeParams: Record<string, string>
   version: string
