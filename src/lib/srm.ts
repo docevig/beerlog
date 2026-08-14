@@ -1,0 +1,44 @@
+import { findStyle } from '../data/styles'
+
+/**
+ * Шкала SRM — принятая у пивоваров мера цвета пива: 2 это бледное пшеничное,
+ * 40 — имперский стаут. Значения соответствуют общепринятой таблице
+ * соответствия градусов SRM экранному цвету.
+ */
+const SRM_COLORS: Record<number, string> = {
+  1: '#FFE699', 2: '#FFD878', 3: '#FFCA5A', 4: '#FFBF42', 5: '#FBB123',
+  6: '#F8A600', 7: '#F39C00', 8: '#EA8F00', 9: '#E58500', 10: '#DE7C00',
+  11: '#D77200', 12: '#CF6900', 13: '#CB6200', 14: '#C35900', 15: '#BB5100',
+  16: '#B54C00', 17: '#B04500', 18: '#A63E00', 19: '#A13700', 20: '#9B3200',
+  21: '#952D00', 22: '#8E2900', 23: '#882300', 24: '#821E00', 25: '#7B1A00',
+  26: '#771900', 27: '#701400', 28: '#6A0E00', 29: '#660D00', 30: '#5E0B00',
+  31: '#5A0A02', 32: '#560903', 33: '#520907', 34: '#4C0505', 35: '#470606',
+  36: '#440607', 37: '#3F0708', 38: '#3B0607', 39: '#3A070B', 40: '#36080A',
+}
+
+/** Цвет по градусу SRM */
+export function srmColor(srm: number): string {
+  const clamped = Math.max(1, Math.min(40, Math.round(srm)))
+  return SRM_COLORS[clamped]
+}
+
+/** Цвет стиля; неизвестный код получает нейтральный серый, а не падает */
+export function styleColor(code: string): string {
+  const style = findStyle(code)
+  return style ? srmColor(style.srm) : '#6B5B48'
+}
+
+/**
+ * Цвет текста поверх заливки. Тёмное пиво требует светлых букв,
+ * светлое — тёмных; граница проходит примерно по SRM 13.
+ */
+export function textOn(code: string): string {
+  const style = findStyle(code)
+  return !style || style.srm >= 13 ? '#F6E8D6' : '#2A1500'
+}
+
+/** Приглушённый вариант того же цвета для вторичных подписей на заливке */
+export function subTextOn(code: string): string {
+  const style = findStyle(code)
+  return !style || style.srm >= 13 ? 'rgba(246,232,214,0.62)' : 'rgba(42,21,0,0.60)'
+}

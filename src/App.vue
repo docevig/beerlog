@@ -1,14 +1,22 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import AddView from './views/AddView.vue'
 import HistoryView from './views/HistoryView.vue'
 import StatsView from './views/StatsView.vue'
+import Bubbles from './components/Bubbles.vue'
 import { createStore } from './storage'
 import { ensureMeta } from './storage/meta'
 import { useEntries } from './store/entries'
+import { useUi } from './store/ui'
 import { tg } from './lib/telegram'
 
 type Tab = 'add' | 'history' | 'stats'
+
+const TABS: { id: Tab; title: string }[] = [
+  { id: 'add', title: 'отметить' },
+  { id: 'history', title: 'история' },
+  { id: 'stats', title: 'статистика' },
+]
 
 const tab = ref<Tab>('add')
 const synced = ref(true)
@@ -16,6 +24,18 @@ const ready = ref(false)
 const failure = ref('')
 
 const { load } = useEntries()
+const { focusDay } = useUi()
+
+// Клик по дню в календаре сам перебрасывает на вкладку истории
+watch(focusDay, (day) => {
+  if (day) tab.value = 'history'
+})
+
+const currentView = computed(() => {
+  if (tab.value === 'add') return AddView
+  if (tab.value === 'history') return HistoryView
+  return StatsView
+})
 
 onMounted(async () => {
   const app = tg()
@@ -43,18 +63,23 @@ onMounted(async () => {
     <p v-if="failure" class="warning">хранилище недоступно: {{ failure }}</p>
 
     <main class="content">
+      <Bubbles v-if="tab === 'add'" />
       <p v-if="!ready" class="loading">загружаем историю</p>
-      <template v-else>
-        <AddView v-if="tab === 'add'" />
-        <HistoryView v-else-if="tab === 'history'" />
-        <StatsView v-else />
-      </template>
+      <Transition v-else name="view" mode="out-in">
+        <component :is="currentView" :key="tab" class="screen" />
+      </Transition>
     </main>
 
     <nav class="tabs">
-      <button type="button" :class="{ active: tab === 'add' }" @click="tab = 'add'">отметить</button>
-      <button type="button" :class="{ active: tab === 'history' }" @click="tab = 'history'">история</button>
-      <button type="button" :class="{ active: tab === 'stats' }" @click="tab = 'stats'">статистика</button>
+      <button
+        v-for="t in TABS"
+        :key="t.id"
+        type="button"
+        :class="{ active: tab === t.id }"
+        @click="tab = t.id"
+      >
+        {{ t.title }}
+      </button>
     </nav>
   </div>
 </template>
@@ -67,19 +92,24 @@ onMounted(async () => {
 }
 .warning {
   margin: 0;
-  padding: 6px 16px;
-  background: var(--section-bg);
-  color: var(--hint);
+  padding: 7px 16px;
+  background: var(--surface-high);
+  color: var(--text-dim);
   font-size: 12px;
   text-align: center;
 }
 .content {
+  position: relative;
   flex: 1;
-  padding-bottom: 64px;
+  padding-bottom: 62px;
+}
+.screen {
+  position: relative;
+  z-index: 1;
 }
 .loading {
   padding: 16px;
-  color: var(--hint);
+  color: var(--text-faint);
   font-size: 14px;
 }
 .tabs {
@@ -87,21 +117,47 @@ onMounted(async () => {
   left: 0;
   right: 0;
   bottom: 0;
+  z-index: 2;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  border-top: 1px solid var(--section-bg);
+  border-top: 1px solid var(--line);
   background: var(--bg);
 }
 .tabs button {
-  padding: 14px 0 calc(14px + env(safe-area-inset-bottom));
+  position: relative;
+  padding: 13px 0 calc(13px + env(safe-area-inset-bottom));
   border: 0;
   background: none;
-  color: var(--hint);
+  color: var(--text-faint);
   font: inherit;
   font-size: 13px;
   cursor: pointer;
+  transition: color 160ms ease;
 }
 .tabs button.active {
-  color: var(--button);
+  color: var(--accent-bright);
+}
+/* Активная вкладка отмечена янтарной чертой сверху */
+.tabs button.active::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 28px;
+  height: 2px;
+  background: var(--accent);
+}
+.view-enter-active,
+.view-leave-active {
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+.view-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+.view-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
 }
 </style>

@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import ChoiceGrid from '../components/ChoiceGrid.vue'
-import { BEER_STYLES, VOLUME_PRESETS, findStyle } from '../data/styles'
-import { formatAbv } from '../lib/format'
+import ChoiceGrid, { type Choice } from '../components/ChoiceGrid.vue'
+import DayGlass from '../components/DayGlass.vue'
+import { BEER_STYLES, VOLUME_PRESETS, findStyle, styleTitle } from '../data/styles'
+import { styleColor, textOn, subTextOn } from '../lib/srm'
+import { formatAbv, formatPortion } from '../lib/format'
+import { dayKey, todayKey } from '../lib/day'
 import { useEntries } from '../store/entries'
 
 const { entries, profile, add } = useEntries()
@@ -11,7 +14,28 @@ const ml = ref<number>(profile.value.lastMl ?? 500)
 const style = ref<string>(profile.value.lastStyle ?? 'lager')
 const showAllStyles = ref(false)
 const showDetails = ref(false)
-const saved = ref(false)
+const justSaved = ref<string | null>(null)
+const pouring = ref(false)
+const pourLabel = ref('записать')
+
+/**
+ * Наливание комментирует само себя. Наборов несколько, чтобы фраза
+ * не приедалась: за десятую кружку она уже не смешная.
+ */
+const POUR_PHRASES = [
+  ['наливаем…', 'пена оседает…', 'готово'],
+  ['щедрой рукой…', 'ждём пену…', 'принято'],
+  ['по краешек…', 'осаживаем…', 'зафиксировано'],
+  ['открываем…', 'шапка растёт…', 'засчитано'],
+  ['держим наклон…', 'выравниваем…', 'записано'],
+  ['пошла родимая…', 'шапка что надо…', 'есть контакт'],
+  ['под углом сорок пять…', 'даём осесть…', 'в дневнике'],
+  ['кран открыт…', 'ловим пену…', 'учтено'],
+  ['до риски…', 'чуть подождём…', 'готово'],
+  ['не расплескать…', 'пена садится…', 'принято к сведению'],
+  ['ровно, без брызг…', 'шапка ровняется…', 'внесено'],
+  ['последняя, честно…', 'ну да, конечно…', 'записано без комментариев'],
+]
 
 const name = ref('')
 const brewery = ref('')
@@ -22,34 +46,56 @@ const price = ref<number | undefined>(undefined)
 const customMl = ref<number | undefined>(undefined)
 const minutesAgo = ref(0)
 
-const volumeOptions = computed(() => [
-  ...VOLUME_PRESETS.map((v) => ({ value: v, title: formatMl(v) })),
+const volumeOptions = computed<Choice[]>(() => [
+  ...VOLUME_PRESETS.map((v) => ({ value: v, title: formatPortion(v) })),
   { value: -1, title: 'своё' },
 ])
 
 /** Часто используемые стили считаются по истории, а не задаются вручную */
-const frequentStyles = computed(() => {
+const frequentStyles = computed<Choice[]>(() => {
   const counts = new Map<string, number>()
-  for (const e of entries.value) {
-    counts.set(e.style, (counts.get(e.style) ?? 0) + 1)
-  }
+  for (const e of entries.value) counts.set(e.style, (counts.get(e.style) ?? 0) + 1)
+
   const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([code]) => code)
-  const fallback = ['lager', 'ipa', 'wheat', 'stout']
-  const codes = [...new Set([...sorted, ...fallback])].slice(0, 4)
-  return codes.map(toOption)
+  const codes = [...new Set([...sorted, 'lager', 'ipa', 'wheat', 'stout'])].slice(0, 4)
+  return codes.map(toChoice)
 })
 
-const allStyleOptions = computed(() =>
-  BEER_STYLES.map((s) => ({ value: s.code, title: s.title, hint: formatAbv(s.abv) })),
-)
+const allStyleOptions = computed<Choice[]>(() => BEER_STYLES.map((s) => toChoice(s.code)))
 
-function toOption(code: string) {
-  const s = findStyle(code)
-  return { value: code, title: s?.title ?? code, hint: s ? formatAbv(s.abv) : undefined }
+/** Что уже выпито сегодня — контекст, который помогает решить, наливать ли ещё */
+const todayEntries = computed(() => entries.value.filter((e) => dayKey(e.ts) === todayKey()))
+
+/**
+ * Последний СДЕЛАННЫЙ выбор, а не последняя по времени запись: отметка
+ * задним числом иначе перебивала бы кнопку повтора более старым пивом.
+ */
+const lastChoice = computed(() => {
+  const { lastStyle, lastMl } = profile.value
+  if (!lastStyle || !lastMl) return null
+  return { style: lastStyle, ml: lastMl }
+})
+
+async function repeatLast() {
+  const source = lastChoice.value
+  if (!source) return
+
+  ml.value = source.ml
+  customMl.value = undefined
+  style.value = source.style
+  await save()
 }
 
-function formatMl(value: number): string {
-  return String(value / 1000).replace('.', ',') + ' л'
+function toChoice(code: string): Choice {
+  const s = findStyle(code)
+  return {
+    value: code,
+    title: s?.title ?? code,
+    hint: s ? formatAbv(s.abv) : undefined,
+    fill: styleColor(code),
+    ink: textOn(code),
+    subInk: subTextOn(code),
+  }
 }
 
 function pickVolume(value: string | number) {
@@ -65,6 +111,23 @@ async function save() {
   const effectiveMl = customMl.value ?? ml.value
   if (!effectiveMl || effectiveMl <= 0) return
 
+  // Кнопка наполняется цветом выбранного пива и проговаривает процесс —
+  // единственный выразительный момент во всём приложении,
+  // ровно на главном действии
+  const phrases = POUR_PHRASES[entries.value.length % POUR_PHRASES.length]
+  pouring.value = true
+  pourLabel.value = phrases[0]
+
+  const timers = [
+    setTimeout(() => (pourLabel.value = phrases[1]), 700),
+    setTimeout(() => (pourLabel.value = phrases[2]), 1250),
+    setTimeout(() => {
+      pouring.value = false
+      pourLabel.value = 'записать'
+    }, 1750),
+  ]
+  void timers
+
   await add({
     ts: Date.now() - minutesAgo.value * 60_000,
     ml: effectiveMl,
@@ -77,6 +140,8 @@ async function save() {
     price: price.value,
   })
 
+  justSaved.value = `${styleTitle(style.value)} ${formatPortion(effectiveMl)}`
+
   name.value = ''
   brewery.value = ''
   place.value = ''
@@ -86,15 +151,14 @@ async function save() {
   minutesAgo.value = 0
   showDetails.value = false
 
-  saved.value = true
-  setTimeout(() => (saved.value = false), 1600)
+  setTimeout(() => (justSaved.value = null), 2200)
 }
 </script>
 
 <template>
   <section class="view">
     <div class="block">
-      <div class="label">объём</div>
+      <div class="eyebrow">объём</div>
       <ChoiceGrid :options="volumeOptions" :model-value="customMl ? -1 : ml" @update:model-value="pickVolume" :columns="4" />
       <input
         v-if="customMl !== undefined"
@@ -102,21 +166,21 @@ async function save() {
         type="number"
         inputmode="numeric"
         class="input"
-        placeholder="миллилитров"
+        placeholder="сколько миллилитров"
       />
     </div>
 
     <div class="block">
-      <div class="label">стиль</div>
+      <div class="eyebrow">стиль</div>
       <ChoiceGrid v-model="style" :options="frequentStyles" :columns="2" />
       <button type="button" class="link" @click="showAllStyles = !showAllStyles">
-        {{ showAllStyles ? 'свернуть' : `ещё ${BEER_STYLES.length - 4} стилей` }}
+        {{ showAllStyles ? 'свернуть список' : `ещё ${BEER_STYLES.length - 4} стилей` }}
       </button>
-      <ChoiceGrid v-if="showAllStyles" v-model="style" :options="allStyleOptions" :columns="3" />
+      <ChoiceGrid v-if="showAllStyles" v-model="style" :options="allStyleOptions" :columns="2" />
     </div>
 
     <button type="button" class="link" @click="showDetails = !showDetails">
-      {{ showDetails ? 'скрыть подробности' : 'подробнее' }}
+      {{ showDetails ? 'скрыть подробности' : 'добавить подробности' }}
     </button>
 
     <div v-if="showDetails" class="block details">
@@ -129,13 +193,29 @@ async function save() {
       </div>
       <input v-model="note" class="input" placeholder="заметка" />
       <label class="shift">
-        выпито минут назад
+        <span>выпито минут назад</span>
         <input v-model.number="minutesAgo" type="number" min="0" class="input narrow" />
       </label>
     </div>
 
-    <button type="button" class="primary" @click="save">записать</button>
-    <p v-if="saved" class="saved">записано</p>
+    <div class="today">
+      <div class="eyebrow">сегодня</div>
+      <DayGlass :entries="todayEntries" />
+    </div>
+
+    <div class="footer">
+      <button v-if="lastChoice" type="button" class="repeat" @click="repeatLast">
+        <span class="repeat-swatch" :style="{ background: styleColor(lastChoice.style) }" />
+        ещё такое же: {{ styleTitle(lastChoice.style) }} {{ formatPortion(lastChoice.ml) }}
+      </button>
+      <Transition name="saved">
+        <p v-if="justSaved" class="saved">записано: {{ justSaved }}</p>
+      </Transition>
+      <button type="button" class="primary" :class="{ emptying: pouring }" @click="save">
+        <span class="pour" :class="{ pouring }" :style="{ background: styleColor(style) }" />
+        <span class="label" :class="{ light: pouring && textOn(style) !== '#2A1500' }">{{ pourLabel }}</span>
+      </button>
+    </div>
   </section>
 </template>
 
@@ -143,36 +223,36 @@ async function save() {
 .view {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 16px;
+  gap: 16px;
+  padding: 16px 16px 0;
+  min-height: calc(100vh - 116px);
 }
 .block {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.label {
-  font-size: 12px;
-  color: var(--hint);
-}
 .input {
   width: 100%;
   padding: 10px;
-  border: 1px solid var(--section-bg);
+  border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: var(--section-bg);
+  background: var(--surface);
   color: var(--text);
   font: inherit;
 }
+.input::placeholder {
+  color: var(--text-faint);
+}
 .input.narrow {
-  width: 90px;
+  width: 84px;
 }
 .row {
   display: flex;
-  gap: 6px;
+  gap: 5px;
 }
 .details {
-  gap: 6px;
+  gap: 5px;
 }
 .shift {
   display: flex;
@@ -180,32 +260,150 @@ async function save() {
   justify-content: space-between;
   gap: 8px;
   font-size: 13px;
-  color: var(--hint);
+  color: var(--text-dim);
 }
 .link {
   align-self: flex-start;
   padding: 0;
   border: 0;
   background: none;
-  color: var(--link);
+  color: var(--accent-bright);
   font: inherit;
   font-size: 13px;
   cursor: pointer;
 }
+/* Сводка дня занимает середину экрана и даёт контекст перед записью */
+.today {
+  margin-top: auto;
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* Повтор прошлой отметки — сокращение самого частого сценария */
+.repeat {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: transform 100ms ease, border-color 160ms ease;
+}
+.repeat:active {
+  transform: scale(0.985);
+  border-color: var(--accent);
+}
+.repeat-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex: none;
+}
+.footer {
+  padding-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 .primary {
-  padding: 14px;
+  position: relative;
+  overflow: hidden;
+  padding: 15px;
   border: 0;
   border-radius: var(--radius);
-  background: var(--button);
-  color: var(--button-text);
-  font: inherit;
-  font-size: 16px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: 0.01em;
   cursor: pointer;
+  transition: transform 100ms ease, background 200ms ease;
+}
+/*
+  На время наливания кнопка гасит собственный янтарь: иначе IPA той же
+  масти льётся в фон того же цвета и движения попросту не видно.
+*/
+.primary.emptying {
+  background: var(--surface-high);
+}
+.primary:active {
+  transform: scale(0.985);
+}
+.label {
+  position: relative;
+  z-index: 1;
+  transition: color 260ms ease;
+}
+/* На тёмном пиве надпись должна светлеть, иначе тонет в заливке */
+.label.light {
+  color: #F6E8D6;
+}
+/* Заливка поднимается снизу, как пиво в стакане; сверху — полоска пены */
+.pour {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 0;
+  transition: height 1150ms cubic-bezier(0.35, 0.75, 0.45, 1);
+}
+/* Шапка пены едет вместе с уровнем и слегка колышется */
+.pour::after {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: 0;
+  right: 0;
+  height: 6px;
+  border-radius: 50% 50% 40% 40% / 100% 100% 20% 20%;
+  background: #FCF8EE;
+  /* Без наливания уровень нулевой, и пена иначе лежала бы полоской по низу */
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+.pour.pouring::after {
+  opacity: 0.92;
+}
+.pour.pouring::after {
+  animation: foam 900ms ease-in-out infinite alternate;
+}
+@keyframes foam {
+  from {
+    transform: scaleX(1) translateY(0);
+  }
+  to {
+    transform: scaleX(1.04) translateY(-1px);
+  }
+}
+.pour.pouring {
+  height: 100%;
 }
 .saved {
   margin: 0;
   text-align: center;
   font-size: 13px;
-  color: var(--hint);
+  color: var(--accent-bright);
+}
+.saved-enter-active,
+.saved-leave-active {
+  transition: opacity 220ms ease, transform 220ms ease;
+}
+.saved-enter-from,
+.saved-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pour {
+    transition: none;
+  }
 }
 </style>

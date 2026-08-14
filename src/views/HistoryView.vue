@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted, nextTick } from 'vue'
 import EntryRow from '../components/EntryRow.vue'
 import { useEntries } from '../store/entries'
+import { useUi } from '../store/ui'
 import { dayKey, todayKey } from '../lib/day'
 import { totalMl, totalAlcoholGrams } from '../lib/stats'
 import { formatLitres, formatDay, formatGrams, withPlural } from '../lib/format'
@@ -9,6 +10,7 @@ import { exportEntries } from '../lib/export'
 import type { Entry } from '../types'
 
 const { entries, remove, update, restore } = useEntries()
+const { takeFocusDay } = useUi()
 
 /** Отметка, ждущая подтверждения удаления */
 const pendingRemoval = ref<Entry | undefined>(undefined)
@@ -16,6 +18,34 @@ let removalTimer: ReturnType<typeof setTimeout> | undefined
 
 const editing = ref<Entry | undefined>(undefined)
 const editMl = ref(0)
+
+/** Раскрытая строка; одновременно раскрыта только одна */
+const expandedId = ref<string | null>(null)
+
+/** День, к которому перебросил календарь — подсвечиваем и прокручиваем */
+const highlightedDay = ref<string | null>(null)
+const dayRefs = new Map<string, HTMLElement>()
+
+function setDayRef(day: string, el: unknown) {
+  if (el instanceof HTMLElement) dayRefs.set(day, el)
+  else dayRefs.delete(day)
+}
+
+function toggleRow(id: string) {
+  expandedId.value = expandedId.value === id ? null : id
+}
+
+onMounted(async () => {
+  const target = takeFocusDay()
+  if (!target) return
+
+  highlightedDay.value = target
+  await nextTick()
+  dayRefs.get(target)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+
+  // Подсветка гаснет сама: она подсказка, а не постоянное состояние
+  setTimeout(() => (highlightedDay.value = null), 2600)
+})
 
 const today = computed(() => entries.value.filter((e) => dayKey(e.ts) === todayKey()))
 
@@ -66,31 +96,57 @@ async function applyEdit() {
 
 <template>
   <section class="view">
-    <div class="summary">
-      <div class="caption">сегодня</div>
-      <div class="big">{{ formatLitres(totalMl(today)) }}</div>
-      <div class="caption">
-        {{ withPlural(today.length, 'порция', 'порции', 'порций') }} ·
-        {{ formatGrams(totalAlcoholGrams(today)) }} спирта
+    <div v-if="entries.length === 0" class="empty">
+      <p class="empty-title">дневник пока пуст</p>
+      <p class="empty-body">открой соседнюю вкладку и отметь первую кружку — двух касаний хватит</p>
+    </div>
+
+    <template v-else>
+      <div class="summary">
+        <div class="eyebrow">сегодня</div>
+        <div class="figure summary-value">{{ formatLitres(totalMl(today)) }}</div>
+        <div class="summary-sub">
+          {{ withPlural(today.length, 'порция', 'порции', 'порций') }} ·
+          {{ formatGrams(totalAlcoholGrams(today)) }} спирта
+        </div>
       </div>
-    </div>
 
-    <button type="button" class="link" @click="exportEntries(entries)">выгрузить историю в файл</button>
+      <div
+        v-for="[day, list] in grouped"
+        :key="day"
+        :ref="(el) => setDayRef(day, el)"
+        class="group"
+        :class="{ highlighted: highlightedDay === day }"
+      >
+        <div class="day">
+          <span>{{ formatDay(day) }}</span>
+          <span class="day-total">{{ formatLitres(totalMl(list)) }}</span>
+        </div>
+        <TransitionGroup name="entry">
+          <EntryRow
+            v-for="e in list"
+            :key="e.id"
+            :entry="e"
+            :expanded="expandedId === e.id"
+            @toggle="toggleRow"
+            @edit="startEdit"
+            @remove="askRemove"
+          />
+        </TransitionGroup>
+      </div>
 
-    <p v-if="entries.length === 0" class="empty">пока пусто — первая отметка на соседней вкладке</p>
+      <button type="button" class="link" @click="exportEntries(entries)">выгрузить историю в файл</button>
+    </template>
 
-    <div v-for="[day, list] in grouped" :key="day" class="group">
-      <div class="day">{{ formatDay(day) }} · {{ formatLitres(totalMl(list)) }}</div>
-      <EntryRow v-for="e in list" :key="e.id" :entry="e" @edit="startEdit" @remove="askRemove" />
-    </div>
-
-    <div v-if="pendingRemoval" class="undo">
-      отметка удалена
-      <button type="button" @click="undoRemove">вернуть</button>
-    </div>
+    <Transition name="toast">
+      <div v-if="pendingRemoval" class="undo">
+        <span>отметка удалена</span>
+        <button type="button" @click="undoRemove">вернуть</button>
+      </div>
+    </Transition>
 
     <div v-if="editing" class="editor">
-      <div class="caption">объём, мл</div>
+      <div class="eyebrow">объём, мл</div>
       <input v-model.number="editMl" type="number" class="input" />
       <div class="editor-actions">
         <button type="button" class="link" @click="editing = undefined">отмена</button>
@@ -104,33 +160,51 @@ async function applyEdit() {
 .view {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 16px;
+  gap: 16px;
+  padding: 16px 16px 24px;
 }
-.summary {
-  padding: 12px;
-  border-radius: var(--radius);
-  background: var(--section-bg);
+.summary-value {
+  font-size: 32px;
+  color: var(--accent-bright);
 }
-.caption {
+.summary-sub {
   font-size: 12px;
-  color: var(--hint);
-}
-.big {
-  font-size: 26px;
-  font-weight: 500;
+  color: var(--text-faint);
+  margin-top: 2px;
 }
 .group {
   display: flex;
   flex-direction: column;
+  scroll-margin-top: 12px;
+  border-radius: var(--radius);
+  transition: background 400ms ease;
+}
+/* Подсветка дня, на который перебросил календарь */
+.group.highlighted {
+  background: rgba(229, 133, 0, 0.12);
 }
 .day {
-  padding: 8px 0 2px;
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0 2px;
   font-size: 12px;
-  color: var(--hint);
+  color: var(--text-faint);
+}
+.day-total {
+  font-variant-numeric: tabular-nums;
 }
 .empty {
-  color: var(--hint);
+  padding: 40px 0;
+}
+.empty-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 17px;
+  margin: 0 0 8px;
+}
+.empty-body {
+  margin: 0;
+  color: var(--text-dim);
   font-size: 14px;
 }
 .link {
@@ -138,7 +212,7 @@ async function applyEdit() {
   padding: 0;
   border: 0;
   background: none;
-  color: var(--link);
+  color: var(--accent-bright);
   font: inherit;
   font-size: 13px;
   cursor: pointer;
@@ -150,15 +224,15 @@ async function applyEdit() {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 11px 13px;
   border-radius: var(--radius);
-  background: var(--section-bg);
+  background: var(--surface-high);
   font-size: 13px;
 }
 .undo button {
   border: 0;
   background: none;
-  color: var(--link);
+  color: var(--accent-bright);
   font: inherit;
   cursor: pointer;
 }
@@ -168,7 +242,7 @@ async function applyEdit() {
   gap: 8px;
   padding: 12px;
   border-radius: var(--radius);
-  background: var(--section-bg);
+  background: var(--surface);
 }
 .editor-actions {
   display: flex;
@@ -178,19 +252,40 @@ async function applyEdit() {
 .input {
   width: 100%;
   padding: 10px;
-  border: 1px solid var(--bg);
+  border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--bg);
   color: var(--text);
   font: inherit;
 }
 .primary {
-  padding: 8px 16px;
+  padding: 9px 18px;
   border: 0;
   border-radius: var(--radius);
-  background: var(--button);
-  color: var(--button-text);
+  background: var(--accent);
+  color: var(--on-accent);
   font: inherit;
   cursor: pointer;
+}
+
+/* Удаляемая строка схлопывается, а не пропадает рывком */
+.entry-leave-active {
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+.entry-leave-to {
+  opacity: 0;
+  transform: translateX(-12px);
+}
+.entry-move {
+  transition: transform 220ms ease;
+}
+.toast-enter-active,
+.toast-leave-active {
+  transition: opacity 200ms ease, transform 200ms ease;
+}
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
 }
 </style>
