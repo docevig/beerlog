@@ -228,7 +228,15 @@ async function avatar(ctx: Ctx, targetId: number): Promise<Response> {
   }
 
   const smallest = photos.result?.photos?.[0]?.[0]
-  if (!photos.ok || !smallest) return json({ error: 'фото нет' }, 404)
+  if (!photos.ok || !smallest) {
+    // Частая причина — приватность: бот не входит в круг, которому видно фото
+    log('фото профиля недоступно', {
+      targetId,
+      apiOk: photos.ok,
+      totalCount: photos.result?.total_count ?? 0,
+    })
+    return json({ error: 'фото нет' }, 404)
+  }
 
   const file = (await (await fetch(`${api}/getFile?file_id=${smallest.file_id}`)).json()) as {
     ok: boolean
@@ -439,7 +447,25 @@ async function listParties(ctx: Ctx): Promise<Response> {
     .bind(ctx.user.id)
     .all()
 
-  return json({ parties: results })
+  const parties = results as unknown as { id: string; ended_at: number | null }[]
+  const open = parties.find((p) => p.ended_at === null)
+
+  // Активный стол прикладываем сразу: иначе клиент шёл бы за ним вторым кругом
+  if (!open) return json({ parties, active: null })
+
+  const [members, entries] = await ctx.env.DB.batch([
+    ctx.env.DB.prepare(
+      `SELECT u.tg_id, u.name, u.photo_url FROM party_members m JOIN users u ON u.tg_id = m.tg_id WHERE m.party_id = ?`,
+    ).bind(open.id),
+    ctx.env.DB.prepare(
+      `SELECT id, tg_id, ts, ml, style, name FROM party_entries WHERE party_id = ? ORDER BY ts`,
+    ).bind(open.id),
+  ])
+
+  return json({
+    parties,
+    active: { party: open, members: members.results, entries: entries.results },
+  })
 }
 
 /**

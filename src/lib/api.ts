@@ -131,7 +131,8 @@ export interface PartyStats {
   crowded: { id: string; started_at: number; members: number } | null
 }
 
-export function listParties(): Promise<{ parties: PartySummary[] }> {
+/** Список приходит вместе с состоянием активного стола — одним запросом */
+export function listParties(): Promise<{ parties: PartySummary[]; active: PartyState | null }> {
   return request('/parties')
 }
 

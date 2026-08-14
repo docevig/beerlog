@@ -1,18 +1,21 @@
 import { ref, computed } from 'vue'
 import type { Entry } from '../types'
-import { apiAvailable, listParties, pushPartyEntry, type PartySummary } from '../lib/api'
+import { apiAvailable, listParties, pushPartyEntry, type PartySummary, type PartyState } from '../lib/api'
 
 /** Идущий сейчас вечер: пока он открыт, отметки уходят ещё и на общий стол */
 const active = ref<PartySummary | null>(null)
 const known = ref<PartySummary[]>([])
+const activeState = ref<PartyState | null>(null)
 
 export function useParty() {
   async function refresh(): Promise<void> {
     if (!apiAvailable()) return
 
-    const { parties } = await listParties()
+    // Состояние стола приходит тем же запросом — второй круг не нужен
+    const { parties, active: state } = await listParties()
     known.value = parties
     active.value = parties.find((p) => p.ended_at === null) ?? null
+    activeState.value = state
   }
 
   /**
@@ -37,6 +40,7 @@ export function useParty() {
 
   return {
     active: computed(() => active.value),
+    activeState: computed(() => activeState.value),
     parties: computed(() => known.value),
     refresh,
     mirror,

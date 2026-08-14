@@ -15,11 +15,23 @@ const src = ref<string | null>(props.photoUrl ?? null)
 
 /** Фото тянем сами: у Telegram оно приходит далеко не всегда */
 async function fetchPhoto() {
-  if (src.value || !props.tgId) return
+  if (!props.tgId) return
   src.value = await loadAvatar(props.tgId)
 }
 
-onMounted(fetchPhoto)
+/**
+ * Ссылка, сохранённая при входе, живёт недолго и часто отдаёт пустоту.
+ * Не доверяем ей: если картинка не загрузилась, идём за фото на сервер.
+ */
+function onImageError() {
+  src.value = null
+  void fetchPhoto()
+}
+
+onMounted(() => {
+  if (!src.value) void fetchPhoto()
+})
+
 watch(() => props.tgId, fetchPhoto)
 
 const initial = (name: string) => name.trim().charAt(0).toUpperCase() || '?'
@@ -27,7 +39,7 @@ const initial = (name: string) => name.trim().charAt(0).toUpperCase() || '?'
 
 <template>
   <span class="avatar" :style="{ borderColor: ring }">
-    <img v-if="src" :src="src" :alt="name" />
+    <img v-if="src" :src="src" :alt="name" @error="onImageError" />
     <span v-else class="initial">{{ initial(name) }}</span>
   </span>
 </template>
