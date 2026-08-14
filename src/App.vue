@@ -102,22 +102,32 @@ function trackViewport(app: ReturnType<typeof tg>): void {
     return
   }
 
+  /*
+    Берём фактическую высоту окна, а не стабильную: при открытой клавиатуре
+    приложение должно сжаться, иначе верх формы уходит за видимую область
+    и достать его прокруткой невозможно — контейнер считает, что всё влезло.
+  */
   const apply = () => {
-    /*
-      Именно стабильная высота — та, что БЕЗ клавиатуры. Обычная viewportHeight
-      меняется на каждом кадре её появления, и раскладка, привязанная к ней,
-      дёргается. Поле, ушедшее под клавиатуру, доскроллит focusin ниже.
-    */
-    const stable = app.viewportStableHeight ?? app.viewportHeight ?? window.innerHeight
-    const height = stable > 0 ? stable : window.innerHeight
+    const reported = app.viewportHeight ?? 0
+    const height = reported > 0 ? reported : window.innerHeight
 
     document.documentElement.style.setProperty('--app-height', `${Math.round(height)}px`)
     windowSize.value = `окно ${window.innerWidth}×${Math.round(height)}`
   }
 
   apply()
-  app.onEvent('viewportChanged', apply)
-  window.addEventListener('resize', apply)
+
+  /*
+    Промежуточные кадры пропускаем. Telegram шлёт viewportChanged всю анимацию
+    клавиатуры, и пересчёт на каждом из них — то самое дёрганье интерфейса;
+    isStateStable отмечает кадр, на котором размер окончательный.
+  */
+  app.onEvent('viewportChanged', (payload) => {
+    if (payload?.isStateStable === false) return
+    apply()
+  })
+
+  // resize здесь не слушаем: на Android он срабатывает пачкой во время анимации
 
   /*
     Клавиатура перекрывает нижнюю часть окна, а высота приложения на неё

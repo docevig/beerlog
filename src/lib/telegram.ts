@@ -9,7 +9,11 @@ export interface TgCloudStorage {
 export interface TgWebApp {
   ready(): void
   expand(): void
-  onEvent(event: string, cb: () => void): void
+  /**
+   * Подписка на события клиента. У viewportChanged есть полезная нагрузка:
+   * isStateStable отличает промежуточные кадры анимации от конечного размера.
+   */
+  onEvent(event: string, cb: (payload?: { isStateStable?: boolean }) => void): void
   openTelegramLink(url: string): void
   /** Подписанная строка для сервера; передаётся как есть, разбирает её Worker */
   initData?: string
