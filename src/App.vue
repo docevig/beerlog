@@ -64,10 +64,37 @@ const currentView = computed(() => {
   return StatsView
 })
 
+/**
+ * Высоту окна берём у Telegram, а не из 100vh: в мини-приложении vh считается
+ * от экрана целиком, поэтому при компактном окне или открытой клавиатуре низ
+ * интерфейса оказывался за краем — до вкладок было не добраться.
+ */
+function trackViewport(app: ReturnType<typeof tg>): void {
+  /*
+    Только внутри Telegram: вне его скрипт тоже создаёт заглушку с высотой,
+    но об изменениях окна не сообщает — переменная застыла бы на первом
+    замере, и в браузере приложение стало бы не по размеру окна.
+  */
+  if (!app?.initData) return
+
+  const apply = () => {
+    // При открытой клавиатуре окно ниже экрана — берём меньшее из двух
+    const reported = app.viewportHeight ?? 0
+    const height = reported > 0 ? Math.min(reported, window.innerHeight) : window.innerHeight
+
+    document.documentElement.style.setProperty('--app-height', `${Math.round(height)}px`)
+  }
+
+  apply()
+  app.onEvent('viewportChanged', apply)
+  window.addEventListener('resize', apply)
+}
+
 onMounted(async () => {
   const app = tg()
   app?.ready()
   app?.expand()
+  trackViewport(app)
 
   const handle = createStore()
   synced.value = handle.synced
@@ -164,7 +191,9 @@ onMounted(async () => {
 .app {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  /* dvh как запасной вариант: он тоже учитывает клавиатуру, но есть не везде */
+  height: var(--app-height, 100dvh);
+  min-height: var(--app-height, 100dvh);
 }
 .warning {
   margin: 0;
@@ -206,10 +235,13 @@ onMounted(async () => {
   font-size: 13px;
   line-height: 1.45;
 }
+/* Прокручивается содержимое, а не страница: так вкладки не уезжают за край окна */
 .content {
   position: relative;
   flex: 1;
-  padding-bottom: 62px;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 .screen {
   position: relative;
@@ -223,11 +255,13 @@ onMounted(async () => {
 .accent {
   color: var(--accent-bright);
 }
+/*
+  Вкладки закреплены не на экране, а в колонке приложения. С position: fixed
+  они привязывались к экрану целиком и при невысоком окне мини-приложения
+  оказывались ниже его края.
+*/
 .tabs {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  flex: none;
   z-index: 2;
   display: grid;
   grid-template-columns: repeat(4, 1fr);

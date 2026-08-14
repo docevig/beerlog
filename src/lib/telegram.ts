@@ -30,6 +30,10 @@ export interface TgWebApp {
   colorScheme: 'light' | 'dark'
   themeParams: Record<string, string>
   version: string
+  /** Высота окна мини-приложения; уменьшается, когда открыта клавиатура */
+  viewportHeight?: number
+  /** Она же без учёта клавиатуры — по ней считать раскладку спокойнее */
+  viewportStableHeight?: number
   CloudStorage?: TgCloudStorage
 }
 

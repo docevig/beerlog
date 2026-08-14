@@ -7,6 +7,7 @@ import type { Entry } from '../types'
 import { BEER_STYLES, VOLUME_PRESETS, findStyle } from '../data/styles'
 import { styleColor, textOn, subTextOn } from '../lib/srm'
 import { formatAbv, formatPortion } from '../lib/format'
+import { parseVolume, volumeHint } from '../lib/volume'
 import { buildCatalog, type KnownBeer } from '../lib/catalog'
 import { useEntries } from '../store/entries'
 
@@ -19,9 +20,13 @@ const { entries } = useEntries()
 const catalog = computed(() => buildCatalog(entries.value))
 
 const ml = ref(props.entry.ml)
-const customMl = ref<number | undefined>(
-  VOLUME_PRESETS.includes(props.entry.ml) ? undefined : props.entry.ml,
+
+/** Поле «своё» держим строкой: запятая в нём законна, а type=number её теряет */
+const customMl = ref<string | undefined>(
+  VOLUME_PRESETS.includes(props.entry.ml) ? undefined : String(props.entry.ml),
 )
+
+const customHint = computed(() => volumeHint(customMl.value))
 const style = ref(props.entry.style)
 const showAllStyles = ref(false)
 
@@ -80,7 +85,7 @@ const shortStyles = computed<Choice[]>(() => {
 
 function pickVolume(value: string | number) {
   if (value === -1) {
-    customMl.value = customMl.value ?? ml.value
+    customMl.value = customMl.value ?? String(ml.value)
     return
   }
   customMl.value = undefined
@@ -88,7 +93,8 @@ function pickVolume(value: string | number) {
 }
 
 function submit() {
-  const effectiveMl = customMl.value ?? ml.value
+  // Пустое или бессмысленное «своё» не должно превратиться в кружку на ноль
+  const effectiveMl = customMl.value === undefined ? ml.value : parseVolume(customMl.value)
   if (!effectiveMl || effectiveMl <= 0) return
 
   emit('save', {
@@ -109,7 +115,17 @@ function submit() {
   <div class="editor">
     <div class="eyebrow">объём</div>
     <ChoiceGrid :options="volumeOptions" :model-value="customMl ? -1 : ml" @update:model-value="pickVolume" :columns="4" />
-    <input v-if="customMl !== undefined" v-model.number="customMl" type="number" class="input" placeholder="миллилитров" />
+    <template v-if="customMl !== undefined">
+      <input
+        v-model="customMl"
+        type="text"
+        inputmode="decimal"
+        class="input"
+        placeholder="0,4 или 400"
+      />
+      <!-- Проговариваем понятое: «0,25» человек имеет в виду как литры, а не как четверть миллилитра -->
+      <span class="unit-hint">{{ customHint || 'литры или миллилитры — поймём и так' }}</span>
+    </template>
 
     <div class="eyebrow">стиль</div>
     <ChoiceGrid v-model="style" :options="showAllStyles ? styleOptions : shortStyles" :columns="2" />
@@ -139,6 +155,10 @@ function submit() {
 </template>
 
 <style scoped>
+.unit-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+}
 .editor {
   display: flex;
   flex-direction: column;

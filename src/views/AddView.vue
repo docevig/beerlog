@@ -8,6 +8,7 @@ import { buildCatalog, type KnownBeer } from '../lib/catalog'
 import { BEER_STYLES, VOLUME_PRESETS, findStyle, styleTitle } from '../data/styles'
 import { styleColor, textOn, subTextOn } from '../lib/srm'
 import { formatAbv, formatPortion } from '../lib/format'
+import { parseVolume, volumeHint } from '../lib/volume'
 import { dayKey, todayKey } from '../lib/day'
 import { overflowRatio } from '../lib/foam'
 import { useEntries } from '../store/entries'
@@ -49,7 +50,10 @@ const place = ref('')
 const note = ref('')
 const rating = ref<number | undefined>(undefined)
 const price = ref<number | undefined>(undefined)
-const customMl = ref<number | undefined>(undefined)
+/** Строкой, а не числом: в поле законна запятая, а type=number её теряет */
+const customMl = ref<string | undefined>(undefined)
+
+const customHint = computed(() => volumeHint(customMl.value))
 const minutesAgo = ref(0)
 
 const volumeOptions = computed<Choice[]>(() => [
@@ -133,7 +137,7 @@ function toChoice(code: string): Choice {
 
 function pickVolume(value: string | number) {
   if (value === -1) {
-    customMl.value = customMl.value ?? ml.value
+    customMl.value = customMl.value ?? String(ml.value)
     return
   }
   customMl.value = undefined
@@ -141,7 +145,8 @@ function pickVolume(value: string | number) {
 }
 
 async function save() {
-  const effectiveMl = customMl.value ?? ml.value
+  // Своё значение разбираем терпимо, но пустое или бессмысленное отбрасываем
+  const effectiveMl = customMl.value === undefined ? ml.value : parseVolume(customMl.value)
   if (!effectiveMl || effectiveMl <= 0) return
 
   // Кнопка наполняется цветом выбранного пива и проговаривает процесс —
@@ -201,14 +206,11 @@ async function save() {
     <div class="block">
       <div class="eyebrow">объём</div>
       <ChoiceGrid :options="volumeOptions" :model-value="customMl ? -1 : ml" @update:model-value="pickVolume" :columns="4" />
-      <input
-        v-if="customMl !== undefined"
-        v-model.number="customMl"
-        type="number"
-        inputmode="numeric"
-        class="input"
-        placeholder="сколько миллилитров"
-      />
+      <template v-if="customMl !== undefined">
+        <input v-model="customMl" type="text" inputmode="decimal" class="input" placeholder="0,4 или 400" />
+        <!-- Показываем, как понято: «0,25» человек имеет в виду литрами, а не четвертью миллилитра -->
+        <span class="unit-hint">{{ customHint || 'литры или миллилитры — поймём и так' }}</span>
+      </template>
     </div>
 
     <div class="block">
@@ -282,7 +284,7 @@ async function save() {
   flex-direction: column;
   gap: 16px;
   padding: 16px 16px 0;
-  min-height: calc(100vh - 116px);
+  min-height: calc(var(--app-height, 100dvh) - 116px);
 }
 .party-banner {
   padding: 8px 11px;
@@ -314,6 +316,10 @@ async function save() {
 .row {
   display: flex;
   gap: 5px;
+}
+.unit-hint {
+  font-size: 11px;
+  color: var(--text-faint);
 }
 .details {
   gap: 5px;
