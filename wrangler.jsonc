@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "beerlog-api",
+  "main": "api/src/index.ts",
+  "compatibility_date": "2026-08-14",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "observability": {
+    "enabled": true,
+    "logs": { "head_sampling_rate": 1 }
+  },
+
+  // Раз в час закрываем вечера, о которых все забыли
+  "triggers": {
+    "crons": ["0 * * * *"]
+  },
+
+  // Идентификатор базы — не секрет: без доступа к аккаунту он бесполезен.
+  // Токен бота живёт в секретах Worker и в конфиг не попадает.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "beerlog",
+      "database_id": "8c848865-7159-457a-8760-1a9eb34c2e91"
+    }
+  ]
+}
