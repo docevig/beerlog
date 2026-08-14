@@ -5,7 +5,10 @@ const API_URL = 'https://beerlog-api.docevig.workers.dev'
 export interface FriendTotals {
   tg_id: number
   name: string
-  photo_url: string | null
+  /** Значок вида «🍺|#E58500», если человек его выбрал */
+  avatar: string | null
+  /** Есть ли своё фото — за ним идём отдельным запросом */
+  has_photo: number
   ml: number
   portions: number
   styles: number
@@ -105,7 +108,8 @@ export interface PartySummary {
 export interface PartyMember {
   tg_id: number
   name: string
-  photo_url: string | null
+  avatar: string | null
+  has_photo: number
 }
 
 export interface PartyEntry {
@@ -313,4 +317,39 @@ export async function loadPhoto(fileId: string): Promise<string | null> {
 /** Ссылка-приглашение: код уезжает в start_param и прилетает обратно при открытии */
 export function inviteLink(code: string): string {
   return `https://t.me/beerlogs_bot/app?startapp=${code}`
+}
+
+/** Своё имя и значок-аватарка; пустые значения возвращают всё как было */
+export function saveMyProfile(profile: { name?: string | null; avatar?: string | null }): Promise<{ ok: boolean }> {
+  return request('/me', { method: 'POST', body: JSON.stringify(profile) })
+}
+
+/** Стирает всё, что о тебе знает сервер; дневник в Telegram остаётся */
+export function deleteAccount(): Promise<{ ok: boolean }> {
+  return request('/me', { method: 'DELETE' })
+}
+
+/** Аватарка своим фото — сжатую картинку хранит Telegram */
+export async function uploadAvatar(blob: Blob): Promise<{ ok: boolean }> {
+  const initData = tg()?.initData
+  if (!initData) throw new Error('доступно только внутри Telegram')
+
+  const response = await fetch(`${API_URL}/me/avatar`, {
+    method: 'POST',
+    body: blob,
+    headers: { 'content-type': blob.type, 'x-init-data': initData },
+    signal: AbortSignal.timeout(30_000),
+  })
+
+  if (!response.ok) {
+    const detail = (await response.json().catch(() => ({}))) as { error?: string }
+    throw new Error(detail.error ?? 'аватарка не загрузилась')
+  }
+
+  return (await response.json()) as { ok: boolean }
+}
+
+/** Сбрасывает запомненную аватарку: после смены нужно перечитать её с сервера */
+export function forgetAvatar(tgId: number): void {
+  avatarCache.delete(tgId)
 }

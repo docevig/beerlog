@@ -60,6 +60,107 @@ async function ensureUser(ctx: Ctx): Promise<void> {
     .run()
 }
 
+/**
+ * Свой профиль: имя и значок-аватарка.
+ *
+ * Имя пишется в отдельную колонку, а не поверх телеграмного: `ensureUser`
+ * обновляет `name` из подписи при каждом входе и затёр бы своё имя сразу же.
+ */
+async function saveProfile(ctx: Ctx): Promise<Response> {
+  const body = (await ctx.request.json()) as { name?: string | null; avatar?: string | null }
+
+  const name = typeof body.name === 'string' ? body.name.trim().slice(0, 40) : null
+  const avatar = typeof body.avatar === 'string' ? body.avatar.trim().slice(0, 32) : null
+
+  // Значок хранится строкой «эмодзи|#цвет»; форму проверяем, чтобы не пустить произвольное
+  if (avatar && !/^.{1,8}\|#[0-9A-Fa-f]{6}$/.test(avatar)) {
+    return json({ error: 'непонятный значок' }, 400)
+  }
+
+  await ctx.env.DB.prepare(
+    `UPDATE users SET custom_name = ?, avatar = ?, avatar_file_id = CASE WHEN ? IS NOT NULL THEN NULL ELSE avatar_file_id END
+      WHERE tg_id = ?`,
+  )
+    .bind(name || null, avatar || null, avatar || null, ctx.user.id)
+    .run()
+
+  return json({ ok: true })
+}
+
+/** Аватарка своим фото. Хранит её Telegram — тем же приёмом, что и этикетки */
+async function uploadAvatar(ctx: Ctx): Promise<Response> {
+  const type = ctx.request.headers.get('content-type') ?? ''
+  if (!type.startsWith('image/')) return json({ error: 'это не изображение' }, 415)
+
+  const bytes = await ctx.request.arrayBuffer()
+  if (bytes.byteLength === 0) return json({ error: 'пустой файл' }, 400)
+  if (bytes.byteLength > 300_000) return json({ error: 'аватарка слишком большая' }, 413)
+
+  const api = `https://api.telegram.org/bot${ctx.env.BOT_TOKEN}`
+  const form = new FormData()
+  form.append('chat_id', String(ctx.user.id))
+  form.append('disable_notification', 'true')
+  // Обезличенные байты: с расширением .webp Telegram счёл бы файл стикером
+  form.append('document', new Blob([bytes], { type: 'application/octet-stream' }), 'avatar.bin')
+
+  const sent = (await (await fetch(`${api}/sendDocument`, { method: 'POST', body: form })).json()) as {
+    ok: boolean
+    description?: string
+    result?: { message_id: number; document?: { file_id: string }; sticker?: { file_id: string } }
+  }
+
+  const message = sent.result
+  const fileId = message?.document?.file_id ?? message?.sticker?.file_id
+
+  if (message?.message_id) {
+    ctx.waitUntil(
+      fetch(`${api}/deleteMessage`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: ctx.user.id, message_id: message.message_id }),
+      }).then(() => undefined),
+    )
+  }
+
+  if (!sent.ok || !fileId) {
+    log('аватарка не сохранилась', { description: sent.description })
+    return json({ error: 'аватарка не загрузилась' }, 502)
+  }
+
+  // Фото важнее значка: оставлять оба нельзя, иначе непонятно, что показывать
+  await ctx.env.DB.prepare(`UPDATE users SET avatar_file_id = ?, avatar = NULL WHERE tg_id = ?`)
+    .bind(fileId, ctx.user.id)
+    .run()
+
+  return json({ ok: true })
+}
+
+/**
+ * Стирает всё, что о человеке знает сервер. Личный дневник остаётся:
+ * он лежит в Telegram, и убрать его оттуда может только сам владелец.
+ *
+ * Свои вечера удаляем целиком — гость, оставшийся за столом без хозяина,
+ * видел бы вечер, которого для остальных уже нет.
+ */
+async function deleteAccount(ctx: Ctx): Promise<Response> {
+  const me = ctx.user.id
+
+  await ctx.env.DB.batch([
+    ctx.env.DB.prepare(`DELETE FROM party_entries WHERE party_id IN (SELECT id FROM parties WHERE host_id = ?)`).bind(me),
+    ctx.env.DB.prepare(`DELETE FROM party_members WHERE party_id IN (SELECT id FROM parties WHERE host_id = ?)`).bind(me),
+    ctx.env.DB.prepare(`DELETE FROM parties WHERE host_id = ?`).bind(me),
+    ctx.env.DB.prepare(`DELETE FROM party_entries WHERE tg_id = ?`).bind(me),
+    ctx.env.DB.prepare(`DELETE FROM party_members WHERE tg_id = ?`).bind(me),
+    ctx.env.DB.prepare(`DELETE FROM friendships WHERE low_id = ? OR high_id = ?`).bind(me, me),
+    ctx.env.DB.prepare(`DELETE FROM invites WHERE author_id = ?`).bind(me),
+    ctx.env.DB.prepare(`DELETE FROM photos WHERE tg_id = ?`).bind(me),
+    ctx.env.DB.prepare(`DELETE FROM totals WHERE tg_id = ?`).bind(me),
+    ctx.env.DB.prepare(`DELETE FROM users WHERE tg_id = ?`).bind(me),
+  ])
+
+  return json({ ok: true })
+}
+
 /** Витрина итогов перезаписывается целиком: правка по частям разошлась бы с дневником */
 async function syncTotals(ctx: Ctx): Promise<Response> {
   const body = (await ctx.request.json()) as {
@@ -143,7 +244,7 @@ async function listFriends(ctx: Ctx): Promise<Response> {
 
   // За всё время суммируем месяцы; список стилей склеиваем на клиенте
   const query = allTime
-    ? `SELECT u.tg_id, u.name, u.photo_url,
+    ? `SELECT u.tg_id, COALESCE(u.custom_name, u.name) AS name, u.avatar, u.avatar_file_id IS NOT NULL AS has_photo,
               COALESCE(SUM(t.ml), 0) AS ml,
               COALESCE(SUM(t.portions), 0) AS portions,
               COALESCE(MAX(t.styles), 0) AS styles,
@@ -159,7 +260,7 @@ async function listFriends(ctx: Ctx): Promise<Response> {
          ${shared}
         WHERE f.low_id = ?1 OR f.high_id = ?1
         GROUP BY u.tg_id`
-    : `SELECT u.tg_id, u.name, u.photo_url,
+    : `SELECT u.tg_id, COALESCE(u.custom_name, u.name) AS name, u.avatar, u.avatar_file_id IS NOT NULL AS has_photo,
               COALESCE(t.ml, 0) AS ml,
               COALESCE(t.portions, 0) AS portions,
               COALESCE(t.styles, 0) AS styles,
@@ -217,12 +318,46 @@ async function maySeeAvatar(ctx: Ctx, targetId: number): Promise<boolean> {
  * (api.telegram.org/file/bot<TOKEN>/...). Поэтому файл забирает Worker
  * и переливает клиенту, а токен остаётся на сервере.
  */
+/** Переливает файл из Telegram клиенту: токен наружу отдавать нельзя */
+async function sendTelegramFile(ctx: Ctx, fileId: string): Promise<Response> {
+  const api = `https://api.telegram.org/bot${ctx.env.BOT_TOKEN}`
+
+  const file = (await (await fetch(`${api}/getFile?file_id=${encodeURIComponent(fileId)}`)).json()) as {
+    ok: boolean
+    result?: { file_path: string }
+  }
+
+  if (!file.ok || !file.result) return json({ error: 'фото недоступно' }, 404)
+
+  const image = await fetch(`https://api.telegram.org/file/bot${ctx.env.BOT_TOKEN}/${file.result.file_path}`)
+  if (!image.ok) return json({ error: 'фото недоступно' }, 404)
+
+  return new Response(image.body, {
+    headers: {
+      'content-type': image.headers.get('content-type') ?? 'image/jpeg',
+      // Меняется редко, а новая аватарка получает свой идентификатор
+      'cache-control': 'private, max-age=86400',
+      ...CORS_HEADERS,
+    },
+  })
+}
+
 async function avatar(ctx: Ctx, targetId: number): Promise<Response> {
   if (!(await maySeeAvatar(ctx, targetId))) {
     return json({ error: 'это не ваш человек' }, 403)
   }
 
   const api = `https://api.telegram.org/bot${ctx.env.BOT_TOKEN}`
+
+  /*
+    Своя аватарка важнее телеграмной: её человек выбрал сам, а фото профиля
+    в Telegram почти всегда закрыто приватностью и приходит пустым списком.
+  */
+  const own = await ctx.env.DB.prepare(`SELECT avatar_file_id FROM users WHERE tg_id = ?`)
+    .bind(targetId)
+    .first<{ avatar_file_id: string | null }>()
+
+  if (own?.avatar_file_id) return sendTelegramFile(ctx, own.avatar_file_id)
 
   const photos = (await (await fetch(`${api}/getUserProfilePhotos?user_id=${targetId}&limit=1`)).json()) as {
     ok: boolean
@@ -692,7 +827,8 @@ async function getParty(ctx: Ctx, partyId: string): Promise<Response> {
 
   const [members, entries] = await Promise.all([
     ctx.env.DB.prepare(
-      `SELECT u.tg_id, u.name, u.photo_url FROM party_members m JOIN users u ON u.tg_id = m.tg_id WHERE m.party_id = ?`,
+      `SELECT u.tg_id, COALESCE(u.custom_name, u.name) AS name, u.avatar, u.avatar_file_id IS NOT NULL AS has_photo
+         FROM party_members m JOIN users u ON u.tg_id = m.tg_id WHERE m.party_id = ?`,
     )
       .bind(partyId)
       .all(),
@@ -731,7 +867,8 @@ async function listParties(ctx: Ctx): Promise<Response> {
 
   const [members, entries] = await ctx.env.DB.batch([
     ctx.env.DB.prepare(
-      `SELECT u.tg_id, u.name, u.photo_url FROM party_members m JOIN users u ON u.tg_id = m.tg_id WHERE m.party_id = ?`,
+      `SELECT u.tg_id, COALESCE(u.custom_name, u.name) AS name, u.avatar, u.avatar_file_id IS NOT NULL AS has_photo
+         FROM party_members m JOIN users u ON u.tg_id = m.tg_id WHERE m.party_id = ?`,
     ).bind(open.id),
     ctx.env.DB.prepare(
       `SELECT id, tg_id, ts, ml, style, name FROM party_entries WHERE party_id = ? ORDER BY ts`,
@@ -757,7 +894,7 @@ async function partyStats(ctx: Ctx): Promise<Response> {
 
     ctx.env.DB.prepare(
       // tg_id нужен клиенту: у себя человек мог подписать друга по-своему
-      `SELECT theirs.tg_id, u.name, COUNT(*) AS evenings
+      `SELECT theirs.tg_id, COALESCE(u.custom_name, u.name) AS name, COUNT(*) AS evenings
          FROM party_members mine
          JOIN party_members theirs ON theirs.party_id = mine.party_id AND theirs.tg_id != mine.tg_id
          JOIN users u ON u.tg_id = theirs.tg_id
@@ -889,6 +1026,9 @@ async function route(ctx: Ctx): Promise<Response> {
   const avatarPath = pathname.match(/^\/avatar\/(\d{1,20})$/)
   if (method === 'GET' && avatarPath) return avatar(ctx, Number(avatarPath[1]))
 
+  if (method === 'POST' && pathname === '/me') return saveProfile(ctx)
+  if (method === 'DELETE' && pathname === '/me') return deleteAccount(ctx)
+  if (method === 'POST' && pathname === '/me/avatar') return uploadAvatar(ctx)
   if (method === 'POST' && pathname === '/share-card') return prepareCard(ctx)
   if (method === 'POST' && pathname === '/photos') return uploadPhoto(ctx)
   if (method === 'GET' && pathname === '/photos') return listPhotos(ctx)

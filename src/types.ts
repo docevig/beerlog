@@ -22,6 +22,11 @@ export interface Entry {
 export interface Profile {
   lastMl?: number
   lastStyle?: string
+  /** Имя, под которым тебя видят друзья, если телеграмное не нравится */
+  displayName?: string
+  /** Значок-аватарка и цвет её фона; хранится и на сервере, чтобы видели друзья */
+  avatarIcon?: string
+  avatarColor?: string
   /** Свои пресеты объёма, если пользователь их менял */
   volumes?: number[]
   /**

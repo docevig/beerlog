@@ -56,8 +56,11 @@ const customMl = ref<string | undefined>(undefined)
 const customHint = computed(() => volumeHint(customMl.value))
 const minutesAgo = ref(0)
 
+/** Свои объёмы из настроек, иначе привычные 0,33 / 0,5 / 1 */
+const presets = computed(() => profile.value.volumes ?? VOLUME_PRESETS)
+
 const volumeOptions = computed<Choice[]>(() => [
-  ...VOLUME_PRESETS.map((v) => ({ value: v, title: formatPortion(v) })),
+  ...presets.value.map((v) => ({ value: v, title: formatPortion(v) })),
   { value: -1, title: 'своё' },
 ])
 

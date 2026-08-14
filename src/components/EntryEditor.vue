@@ -14,7 +14,7 @@ import { useEntries } from '../store/entries'
 const props = defineProps<{ entry: Entry }>()
 const emit = defineEmits<{ save: [patch: Partial<Entry>]; cancel: [] }>()
 
-const { entries } = useEntries()
+const { entries, profile } = useEntries()
 
 /** Подсказки те же, что при отметке: правка не должна знать меньше добавления */
 const catalog = computed(() => buildCatalog(entries.value))
@@ -23,7 +23,7 @@ const ml = ref(props.entry.ml)
 
 /** Поле «своё» держим строкой: запятая в нём законна, а type=number её теряет */
 const customMl = ref<string | undefined>(
-  VOLUME_PRESETS.includes(props.entry.ml) ? undefined : String(props.entry.ml),
+  (profile.value.volumes ?? VOLUME_PRESETS).includes(props.entry.ml) ? undefined : String(props.entry.ml),
 )
 
 const customHint = computed(() => volumeHint(customMl.value))
@@ -55,8 +55,11 @@ function toLocalInput(ts: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
+/** Свои объёмы из настроек, иначе привычные 0,33 / 0,5 / 1 */
+const presets = computed(() => profile.value.volumes ?? VOLUME_PRESETS)
+
 const volumeOptions = computed<Choice[]>(() => [
-  ...VOLUME_PRESETS.map((v) => ({ value: v, title: formatPortion(v) })),
+  ...presets.value.map((v) => ({ value: v, title: formatPortion(v) })),
   { value: -1, title: 'своё' },
 ])
 

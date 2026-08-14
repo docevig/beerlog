@@ -29,10 +29,10 @@ function toBlob(canvas: HTMLCanvasElement, type: string): Promise<Blob | null> {
  * картинок у Cloudflare платная, поэтому уменьшаем прямо на устройстве:
  * заодно экономим трафик пользователя на мобильной сети.
  */
-export async function compressImage(file: File): Promise<Compressed> {
+export async function compressImage(file: File, maxSide = MAX_SIDE): Promise<Compressed> {
   const bitmap = await createImageBitmap(file)
 
-  const scale = Math.min(1, MAX_SIDE / Math.max(bitmap.width, bitmap.height))
+  const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height))
   const width = Math.round(bitmap.width * scale)
   const height = Math.round(bitmap.height * scale)
 

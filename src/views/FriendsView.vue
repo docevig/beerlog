@@ -79,6 +79,11 @@ const mine = computed(() => ({
   topStyle: styleBreakdown(monthEntries.value)[0]?.style,
 }))
 
+/** Свой значок собираем из профиля: на сервер за собственной аватаркой не ходим */
+const myBadge = computed(() =>
+  profile.value.avatarIcon ? `${profile.value.avatarIcon}|${profile.value.avatarColor ?? '#E58500'}` : null,
+)
+
 const openId = ref<number | null>(null)
 
 function toggle(id: number) {
@@ -134,7 +139,8 @@ const DEMO_FRIENDS: FriendTotals[] = [
   {
     tg_id: 1,
     name: 'Паша',
-    photo_url: null,
+    avatar: null,
+      has_photo: 0,
     ml: 4200,
     portions: 9,
     styles: 5,
@@ -148,7 +154,8 @@ const DEMO_FRIENDS: FriendTotals[] = [
   {
     tg_id: 2,
     name: 'Марина',
-    photo_url: null,
+    avatar: null,
+      has_photo: 0,
     ml: 1800,
     portions: 4,
     styles: 4,
@@ -162,7 +169,8 @@ const DEMO_FRIENDS: FriendTotals[] = [
   {
     tg_id: 3,
     name: 'Костя',
-    photo_url: null,
+    avatar: null,
+      has_photo: 0,
     ml: 6100,
     portions: 13,
     styles: 2,
@@ -346,7 +354,12 @@ function tasteHint(friend: FriendTotals): string {
              а не второй экран итогов -->
         <div class="friend self">
           <div class="friend-head static">
-            <Avatar :tg-id="myId" :name="myInitial" :ring="srmColor(mine.avgSrm || 4)" />
+            <Avatar
+              :tg-id="myId"
+              :name="profile.displayName || myInitial"
+              :ring="srmColor(mine.avgSrm || 4)"
+              :avatar="myBadge"
+            />
             <span class="friend-body">
               <span class="friend-name">ты</span>
               <span class="friend-numbers">
@@ -361,7 +374,13 @@ function tasteHint(friend: FriendTotals): string {
         <div v-for="f in sortedFriends" :key="f.tg_id" class="friend">
           <button type="button" class="friend-head" @click="toggle(f.tg_id)">
             <!-- Обводка аватара — средний цвет месяца: вкус виден до раскрытия -->
-            <Avatar :tg-id="f.tg_id" :name="displayName(f)" :ring="srmColor(f.avg_srm || 4)" />
+            <Avatar
+              :tg-id="f.tg_id"
+              :name="displayName(f)"
+              :ring="srmColor(f.avg_srm || 4)"
+              :avatar="f.avatar"
+              :has-photo="Boolean(f.has_photo)"
+            />
             <span class="friend-body">
               <span class="friend-name">{{ displayName(f) }}</span>
               <span class="friend-numbers">

@@ -7,9 +7,19 @@ const props = defineProps<{
   name: string
   /** Цвет обводки — средний оттенок месяца по шкале SRM */
   ring: string
+  /** Выбранный значок в виде «🍺|#E58500» — показывается вместо фото */
+  avatar?: string | null
+  /** Есть ли у человека своё фото: без этого не ходим за ним впустую */
+  hasPhoto?: boolean
 }>()
 
 const src = ref<string | null>(null)
+
+/** Значок разбираем сами: строка приходит с сервера одним полем */
+const badge = computed(() => {
+  const [icon, color] = (props.avatar ?? '').split('|')
+  return icon && color ? { icon, color } : null
+})
 
 /**
  * Цвета заглушек. У большинства фото закрыто настройками приватности,
@@ -38,7 +48,12 @@ const palette = computed(() => PLACEHOLDER_COLORS[Math.abs(props.tgId) % PLACEHO
  * заметить по ошибке картинки — только не использовать её вовсе.
  */
 async function fetchPhoto() {
-  if (!props.tgId) return
+  // Значок рисуется на месте, а за фото ходим только если оно есть
+  if (!props.tgId || badge.value || props.hasPhoto === false) {
+    src.value = null
+    return
+  }
+
   src.value = await loadAvatar(props.tgId)
 }
 
@@ -47,7 +62,7 @@ function onImageError() {
 }
 
 onMounted(fetchPhoto)
-watch(() => props.tgId, fetchPhoto)
+watch(() => [props.tgId, props.avatar, props.hasPhoto], fetchPhoto)
 
 const initial = (name: string) => name.trim().charAt(0).toUpperCase() || '?'
 </script>
@@ -55,9 +70,10 @@ const initial = (name: string) => name.trim().charAt(0).toUpperCase() || '?'
 <template>
   <span
     class="avatar"
-    :style="{ borderColor: ring, background: src ? undefined : palette.bg }"
+    :style="{ borderColor: ring, background: badge ? badge.color : src ? undefined : palette.bg }"
   >
-    <img v-if="src" :src="src" :alt="name" @error="onImageError" />
+    <span v-if="badge" class="badge">{{ badge.icon }}</span>
+    <img v-else-if="src" :src="src" :alt="name" @error="onImageError" />
     <span v-else class="initial" :style="{ color: palette.ink }">{{ initial(name) }}</span>
   </span>
 </template>
@@ -84,5 +100,9 @@ const initial = (name: string) => name.trim().charAt(0).toUpperCase() || '?'
   font-family: var(--font-display);
   font-weight: 600;
   font-size: 15px;
+}
+.badge {
+  font-size: 19px;
+  line-height: 1;
 }
 </style>

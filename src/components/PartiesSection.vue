@@ -55,9 +55,9 @@ function loadDemo() {
       portions: 5,
     },
     members: [
-      { tg_id: props.meId, name: 'ты', photo_url: null },
-      { tg_id: 1, name: 'Паша', photo_url: null },
-      { tg_id: 2, name: 'Марина', photo_url: null },
+      { tg_id: props.meId, name: 'ты', avatar: null, has_photo: 0 },
+      { tg_id: 1, name: 'Паша', avatar: null, has_photo: 0 },
+      { tg_id: 2, name: 'Марина', avatar: null, has_photo: 0 },
     ],
     entries: [
       { id: 'd1', tg_id: props.meId, ts: started + 600_000, ml: 500, style: 'ipa', name: null },
@@ -206,9 +206,9 @@ async function openPast(summary: PartySummary) {
 function demoPastState(summary: PartySummary): PartyState {
   const span = (summary.ended_at ?? summary.started_at) - summary.started_at
   const cast = [
-    { tg_id: props.meId, name: 'ты', photo_url: null },
-    { tg_id: 1, name: 'Паша', photo_url: null },
-    { tg_id: 2, name: 'Марина', photo_url: null },
+    { tg_id: props.meId, name: 'ты', avatar: null, has_photo: 0 },
+    { tg_id: 1, name: 'Паша', avatar: null, has_photo: 0 },
+    { tg_id: 2, name: 'Марина', avatar: null, has_photo: 0 },
   ].slice(0, summary.members)
 
   const styles = ['ipa', 'lager', 'stout', 'neipa', 'porter', 'wheat', 'apa']

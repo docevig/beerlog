@@ -4,6 +4,7 @@ import AddView from './views/AddView.vue'
 import HistoryView from './views/HistoryView.vue'
 import StatsView from './views/StatsView.vue'
 import FriendsView from './views/FriendsView.vue'
+import SettingsView from './views/SettingsView.vue'
 import Bubbles from './components/Bubbles.vue'
 import { createStore } from './storage'
 import { ensureMeta } from './storage/meta'
@@ -39,31 +40,27 @@ const HINTS: Record<Tab, string> = {
 
 const tab = ref<Tab>('add')
 const hintOpen = ref(false)
+const settingsOpen = ref(false)
 const synced = ref(true)
+
+/** Свой идентификатор нужен настройкам: под ним живут аватарка и имя */
+const meId = tg()?.initDataUnsafe?.user?.id
+
+/** Сколько ключей занято в хранилище — показываем в справке о приложении */
+const storageKeys = ref(0)
+
+/** Досылку из настроек делает то же хранилище, что и при возврате в приложение */
+let resend: (() => void) | undefined
+
+function flushPending() {
+  resend?.()
+}
 const ready = ref(false)
 const failure = ref('')
 const invited = ref('')
 
 /** Сколько записей ждут сети, чтобы уехать в облако */
 const waiting = ref(0)
-
-/** Размеры окна пересчитываем на лету: они и есть предмет жалоб на вёрстку */
-const windowSize = ref('')
-
-/**
- * Техническая строка под справкой. Она отвечает на первый вопрос любой
- * жалобы: та ли это версия и какого размера окно у человека.
- */
-const diagnostics = computed(() => {
-  const app = tg()
-  const parts = [`сборка ${__BUILD_ID__}`]
-
-  if (app?.version) parts.push(`Telegram ${app.version}`)
-  if (windowSize.value) parts.push(windowSize.value)
-  if (!synced.value) parts.push('без облака')
-
-  return parts.join(' · ')
-})
 
 const { load, entries: allEntries } = useEntries()
 const { focusDay } = useUi()
@@ -96,9 +93,6 @@ function trackViewport(app: ReturnType<typeof tg>): void {
     застыло бы на первом замере, и в браузере приложение стало бы не по окну.
   */
   if (!app?.initData) {
-    const show = () => (windowSize.value = `окно ${window.innerWidth}×${window.innerHeight}`)
-    show()
-    window.addEventListener('resize', show)
     return
   }
 
@@ -112,7 +106,6 @@ function trackViewport(app: ReturnType<typeof tg>): void {
     const height = reported > 0 ? reported : window.innerHeight
 
     document.documentElement.style.setProperty('--app-height', `${Math.round(height)}px`)
-    windowSize.value = `окно ${window.innerWidth}×${Math.round(height)}`
   }
 
   apply()
@@ -167,12 +160,15 @@ onMounted(async () => {
 
     document.addEventListener('visibilitychange', catchUp)
     window.addEventListener('online', catchUp)
+    resend = () => void keeper.flush()
     void keeper.flush()
   }
 
   try {
     await ensureMeta(handle.store)
     await load(handle.store)
+    // Занятые ключи считаем один раз: цифра нужна только в справке
+    storageKeys.value = (await handle.store.keys()).length
   } catch (e) {
     // Сорвавшееся хранилище не должно оставлять экран в вечной загрузке
     failure.value = e instanceof Error ? e.message : String(e)
@@ -240,13 +236,10 @@ onMounted(async () => {
       >
         ?
       </button>
+      <button type="button" class="help" aria-label="настройки" @click="settingsOpen = true">⚙</button>
     </div>
 
-    <div v-if="hintOpen" class="hint-box">
-      <p class="hint-text">{{ HINTS[tab] }}</p>
-      <!-- Строка для разбора жалоб: по ней видно версию у человека и размеры его окна -->
-      <p class="hint-tech">{{ diagnostics }}</p>
-    </div>
+    <p v-if="hintOpen" class="hint-box">{{ HINTS[tab] }}</p>
 
     <main class="content">
       <Bubbles v-if="tab === 'add'" />
@@ -254,6 +247,16 @@ onMounted(async () => {
       <Transition v-else name="view" mode="out-in">
         <component :is="currentView" :key="tab" class="screen" />
       </Transition>
+
+      <SettingsView
+        v-if="settingsOpen"
+        :me-id="meId ?? 0"
+        :waiting="waiting"
+        :synced="synced"
+        :keys="storageKeys"
+        @close="settingsOpen = false"
+        @flush="flushPending"
+      />
     </main>
 
     <nav class="tabs">
@@ -317,14 +320,6 @@ onMounted(async () => {
   color: var(--text-dim);
   font-size: 13px;
   line-height: 1.45;
-}
-.hint-text {
-  margin: 0;
-}
-.hint-tech {
-  margin: 8px 0 0;
-  color: var(--text-faint);
-  font-size: 11px;
 }
 /* Прокручивается содержимое, а не страница: так вкладки не уезжают за край окна */
 .content {
