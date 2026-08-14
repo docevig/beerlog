@@ -27,6 +27,9 @@ const ready = ref(false)
 const failure = ref('')
 const invited = ref('')
 
+/** Сколько записей ждут сети, чтобы уехать в облако */
+const waiting = ref(0)
+
 const { load } = useEntries()
 const { focusDay } = useUi()
 
@@ -49,6 +52,24 @@ onMounted(async () => {
 
   const handle = createStore()
   synced.value = handle.synced
+
+  const keeper = handle.resilient
+  if (keeper) {
+    waiting.value = keeper.pendingCount
+    keeper.onPendingChange = (count) => (waiting.value = count)
+
+    /*
+      Досылаем при возвращении в приложение: человек вышел из подвала,
+      открыл beerlog снова — и записи уезжают сами, без единой кнопки.
+    */
+    const catchUp = () => {
+      if (document.visibilityState === 'visible' && keeper.pendingCount > 0) void keeper.flush()
+    }
+
+    document.addEventListener('visibilitychange', catchUp)
+    window.addEventListener('online', catchUp)
+    void keeper.flush()
+  }
 
   try {
     await ensureMeta(handle.store)
@@ -78,6 +99,8 @@ onMounted(async () => {
 <template>
   <div class="app">
     <p v-if="!synced" class="warning">данные хранятся только на этом устройстве</p>
+    <!-- Кружка записана в любом случае; строка объясняет, почему её пока не видно на других устройствах -->
+    <p v-else-if="waiting > 0" class="warning">записано на телефоне · ждём сеть, чтобы синхронизировать</p>
     <p v-if="failure" class="warning">хранилище недоступно: {{ failure }}</p>
     <p v-if="invited" class="warning accent">{{ invited }}</p>
 
