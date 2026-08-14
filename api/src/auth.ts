@@ -87,10 +87,17 @@ export async function computeHash(checkString: string, botToken: string): Promis
   return toHex(await hmac(secret, checkString))
 }
 
-/** Строка проверки: все поля кроме hash и signature, по алфавиту */
-export function buildCheckString(pairs: Map<string, string>): string {
+/**
+ * Строка проверки: все поля по алфавиту, кроме hash.
+ *
+ * Поле signature — отдельная Ed25519-подпись для сторонней проверки.
+ * Документация Telegram велит убирать только hash, а распространённые
+ * библиотеки убирают и signature. Трактовки расходятся, поэтому строку
+ * умеем собирать обоими способами и принимаем совпадение любой.
+ */
+export function buildCheckString(pairs: Map<string, string>, dropSignature = true): string {
   return [...pairs.entries()]
-    .filter(([key]) => key !== 'hash' && key !== 'signature')
+    .filter(([key]) => key !== 'hash' && !(dropSignature && key === 'signature'))
     .map(([key, value]) => `${key}=${value}`)
     .sort()
     .join('\n')
@@ -134,13 +141,19 @@ export async function verifyInitDataDetailed(initData: string, botToken: string)
   const providedHash = pairs.get('hash')
   if (!providedHash) return { ok: false, reason: 'no-hash', details: { keys: receivedKeys } }
 
-  // hash и signature в строку проверки не входят — это подписи, а не данные
   const checkString = buildCheckString(pairs)
   const signedKeys = [...pairs.keys()].filter((k) => k !== 'hash' && k !== 'signature')
 
   const expected = await computeHash(checkString, botToken)
+  let matched = await equalsSafely(expected, providedHash)
 
-  if (!(await equalsSafely(expected, providedHash))) {
+  // Вторая трактовка: signature участвует в подписи наравне с остальными полями
+  if (!matched && pairs.has('signature')) {
+    const withSignature = await computeHash(buildCheckString(pairs, false), botToken)
+    matched = await equalsSafely(withSignature, providedHash)
+  }
+
+  if (!matched) {
     return {
       ok: false,
       reason: 'hash-mismatch',

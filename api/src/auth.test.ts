@@ -71,6 +71,22 @@ describe('verifyInitDataDetailed', () => {
     expect((await verifyInitDataDetailed(initData, TOKEN)).ok).toBe(true)
   })
 
+  it('принимает подпись, посчитанную вместе с полем signature', async () => {
+    // Вторая трактовка стандарта: signature входит в строку проверки
+    const pairs = new Map([
+      ['auth_date', String(nowSeconds)],
+      ['user', JSON.stringify({ id: 5, first_name: 'Игорь' })],
+      ['signature', 'Ed25519SignatureValue'],
+    ])
+
+    const hash = referenceHash(buildCheckString(pairs, false), TOKEN)
+    const query = [...pairs.entries()].map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&')
+
+    const result = await verifyInitDataDetailed(`${query}&hash=${hash}`, TOKEN)
+    expect(result.reason).toBeUndefined()
+    expect(result.ok).toBe(true)
+  })
+
   it('отвергает подпись от чужого токена', async () => {
     const initData = await signed(
       { auth_date: String(nowSeconds), user: JSON.stringify({ id: 1 }) },
