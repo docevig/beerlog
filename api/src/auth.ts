@@ -101,11 +101,14 @@ export async function verifyInitDataDetailed(initData: string, botToken: string)
     return {
       ok: false,
       reason: 'hash-mismatch',
-      // Хвосты хешей безопасны и позволяют отличить «не тот токен» от «сломанной строки»
       details: {
         keys: [...params.keys()],
         expectedTail: expected.slice(-6),
         providedTail: providedHash.slice(-6),
+        // Часть токена до двоеточия — публичный id бота, не секрет.
+        // По нему видно, от того ли бота лежит токен в секрете.
+        tokenBotId: botToken.split(':')[0],
+        checkStringLength: checkString.length,
       },
     }
   }
