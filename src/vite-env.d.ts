@@ -1,5 +1,8 @@
 /// <reference types="vite/client" />
 
+/** Метка сборки, подставляется Vite; показывается в справке для разбора жалоб */
+declare const __BUILD_ID__: string
+
 declare module '*.vue' {
   import type { DefineComponent } from 'vue'
   const component: DefineComponent<{}, {}, any>

@@ -47,6 +47,24 @@ const invited = ref('')
 /** Сколько записей ждут сети, чтобы уехать в облако */
 const waiting = ref(0)
 
+/** Размеры окна пересчитываем на лету: они и есть предмет жалоб на вёрстку */
+const windowSize = ref('')
+
+/**
+ * Техническая строка под справкой. Она отвечает на первый вопрос любой
+ * жалобы: та ли это версия и какого размера окно у человека.
+ */
+const diagnostics = computed(() => {
+  const app = tg()
+  const parts = [`сборка ${__BUILD_ID__}`]
+
+  if (app?.version) parts.push(`Telegram ${app.version}`)
+  if (windowSize.value) parts.push(windowSize.value)
+  if (!synced.value) parts.push('без облака')
+
+  return parts.join(' · ')
+})
+
 const { load } = useEntries()
 const { focusDay } = useUi()
 const { refresh: refreshParty } = useParty()
@@ -73,11 +91,16 @@ const currentView = computed(() => {
  */
 function trackViewport(app: ReturnType<typeof tg>): void {
   /*
-    Только внутри Telegram: вне его скрипт тоже создаёт заглушку с высотой,
-    но об изменениях окна не сообщает — переменная застыла бы на первом
-    замере, и в браузере приложение стало бы не по размеру окна.
+    Переменную высоты ставим только внутри Telegram: вне его скрипт тоже
+    создаёт заглушку с высотой, но об изменениях окна не сообщает — значение
+    застыло бы на первом замере, и в браузере приложение стало бы не по окну.
   */
-  if (!app?.initData) return
+  if (!app?.initData) {
+    const show = () => (windowSize.value = `окно ${window.innerWidth}×${window.innerHeight}`)
+    show()
+    window.addEventListener('resize', show)
+    return
+  }
 
   const apply = () => {
     // При открытой клавиатуре окно ниже экрана — берём меньшее из двух
@@ -85,6 +108,7 @@ function trackViewport(app: ReturnType<typeof tg>): void {
     const height = reported > 0 ? Math.min(reported, window.innerHeight) : window.innerHeight
 
     document.documentElement.style.setProperty('--app-height', `${Math.round(height)}px`)
+    windowSize.value = `окно ${window.innerWidth}×${Math.round(height)}`
   }
 
   apply()
@@ -180,7 +204,11 @@ onMounted(async () => {
       </button>
     </div>
 
-    <p v-if="hintOpen" class="hint-box">{{ HINTS[tab] }}</p>
+    <div v-if="hintOpen" class="hint-box">
+      <p class="hint-text">{{ HINTS[tab] }}</p>
+      <!-- Строка для разбора жалоб: по ней видно версию у человека и размеры его окна -->
+      <p class="hint-tech">{{ diagnostics }}</p>
+    </div>
 
     <main class="content">
       <Bubbles v-if="tab === 'add'" />
@@ -251,6 +279,14 @@ onMounted(async () => {
   color: var(--text-dim);
   font-size: 13px;
   line-height: 1.45;
+}
+.hint-text {
+  margin: 0;
+}
+.hint-tech {
+  margin: 8px 0 0;
+  color: var(--text-faint);
+  font-size: 11px;
 }
 /* Прокручивается содержимое, а не страница: так вкладки не уезжают за край окна */
 .content {
