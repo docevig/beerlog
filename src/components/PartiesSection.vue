@@ -125,7 +125,7 @@ async function invite() {
 
   try {
     const { code } = await partyInvite(state.value.party.id)
-    const text = 'сегодня пьём вместе — заходи за стол, ссылка одноразовая'
+    const text = 'сегодня пьём вместе — заходи за стол, ссылка работает до конца вечера'
     const url = `https://t.me/share/url?url=${encodeURIComponent(inviteLink(code))}&text=${encodeURIComponent(text)}`
     const app = tg()
     if (app) app.openTelegramLink(url)

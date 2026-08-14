@@ -316,9 +316,17 @@ async function acceptInvite(ctx: Ctx, code: string): Promise<Response> {
     .first<{ kind: string; author_id: number; party_id: string | null; expires_at: number; used_by: number | null }>()
 
   if (!invite) return json({ error: 'приглашение не найдено' }, 404)
-  if (invite.used_by !== null) return json({ error: 'приглашение уже использовано' }, 409)
   if (invite.expires_at < Date.now()) return json({ error: 'срок приглашения истёк' }, 410)
   if (invite.author_id === ctx.user.id) return json({ error: 'нельзя принять своё приглашение' }, 400)
+
+  /*
+    Дружба открывает доступ к статистике надолго, поэтому такое приглашение
+    одноразовое. Приглашение на вечер — наоборот, общее: одну ссылку кидают
+    в чат компании, и заходят все. Живёт оно ровно пока вечер открыт.
+  */
+  if (invite.kind === 'friend' && invite.used_by !== null) {
+    return json({ error: 'приглашение уже использовано' }, 409)
+  }
 
   const now = Date.now()
 
@@ -333,10 +341,19 @@ async function acceptInvite(ctx: Ctx, code: string): Promise<Response> {
     return json({ ok: true, kind: 'friend' })
   }
 
+  // Вечер закончился — ссылка недействительна, даже если её сохранили
+  const party = await ctx.env.DB.prepare(`SELECT ended_at FROM parties WHERE id = ?`)
+    .bind(invite.party_id)
+    .first<{ ended_at: number | null }>()
+
+  if (!party) return json({ error: 'вечеринка не найдена' }, 404)
+  if (party.ended_at !== null) return json({ error: 'этот вечер уже закончился' }, 410)
+
   await ctx.env.DB.batch([
     ctx.env.DB.prepare(
       `INSERT INTO party_members (party_id, tg_id, joined_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
     ).bind(invite.party_id, ctx.user.id, now),
+    // Отмечаем последнего вошедшего, но код продолжает работать для остальных
     ctx.env.DB.prepare(`UPDATE invites SET used_by = ?, used_at = ? WHERE code = ?`).bind(ctx.user.id, now, code),
   ])
 
