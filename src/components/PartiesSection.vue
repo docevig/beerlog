@@ -16,6 +16,7 @@ import {
   type PartySummary,
 } from '../lib/api'
 import { useParty } from '../store/party'
+import { useEntries } from '../store/entries'
 import { styleTitle } from '../data/styles'
 import { styleColor, textOn } from '../lib/srm'
 import { formatLitres, formatDay, withPlural } from '../lib/format'
@@ -24,7 +25,8 @@ import { tg } from '../lib/telegram'
 
 const props = defineProps<{ meId: number }>()
 
-const { active, parties, refresh } = useParty()
+const { active, parties, refresh, mirrorUpdate, mirrorRemove } = useParty()
+const { entries } = useEntries()
 
 const state = ref<PartyState | null>(null)
 const stats = ref<PartyStats | null>(null)
@@ -87,6 +89,42 @@ function loadDemo() {
   }
 }
 
+/**
+ * Подтягивает свои строки стола к дневнику. Зеркалирование правок глотает
+ * ошибки молча — иначе сбой сети мешал бы записать кружку, — поэтому одно
+ * неудавшееся удаление осталось бы на столе навсегда. Здесь стол догоняет сам.
+ *
+ * Возвращает true, если что-то поменялось и состояние стоит перечитать.
+ */
+async function reconcile(table: PartyState): Promise<boolean> {
+  // Пустой дневник — не повод сносить стол: вероятнее, что он просто не загрузился
+  if (entries.value.length === 0) return false
+
+  const diary = new Map(entries.value.map((e) => [e.id, e]))
+  let changed = false
+
+  for (const row of table.entries) {
+    if (row.tg_id !== props.meId) continue
+
+    const mine = diary.get(row.id)
+
+    if (!mine) {
+      await mirrorRemove(row.id)
+      changed = true
+    } else if (
+      mine.ml !== row.ml ||
+      mine.style !== row.style ||
+      mine.ts !== row.ts ||
+      (mine.name ?? null) !== row.name
+    ) {
+      await mirrorUpdate(mine)
+      changed = true
+    }
+  }
+
+  return changed
+}
+
 async function load() {
   if (!apiAvailable()) {
     if (import.meta.env.DEV) loadDemo()
@@ -99,7 +137,10 @@ async function load() {
     stats.value = freshStats
 
     // Состояние стола можно узнать только после того, как выяснили активный вечер
-    if (active.value) state.value = await fetchParty(active.value.id)
+    if (active.value) {
+      const table = await fetchParty(active.value.id)
+      state.value = (await reconcile(table)) ? await fetchParty(active.value.id) : table
+    }
   } catch (e) {
     failure.value = e instanceof Error ? e.message : String(e)
   }
@@ -185,7 +226,9 @@ async function openPast(summary: PartySummary) {
   }
 
   try {
-    past.value = await fetchParty(summary.id)
+    const table = await fetchParty(summary.id)
+    // Прошлый вечер сверяем так же: расхождение могло остаться и в нём
+    past.value = (await reconcile(table)) ? await fetchParty(summary.id) : table
   } catch (e) {
     failure.value = e instanceof Error ? e.message : String(e)
   }
