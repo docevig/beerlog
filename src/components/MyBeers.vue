@@ -33,6 +33,12 @@ function remember(name: string, fileId: string) {
   photos.value = { ...photos.value, [name.toLowerCase()]: fileId }
 }
 
+function forget(name: string) {
+  const next = { ...photos.value }
+  delete next[name.toLowerCase()]
+  photos.value = next
+}
+
 onMounted(async () => {
   if (!apiAvailable()) return
 
@@ -92,6 +98,7 @@ const beers = computed(() => {
           :beer-key="beer.name.toLowerCase()"
           :file-id="photoOf(beer.name)"
           @uploaded="(id) => remember(beer.name, id)"
+          @removed="() => forget(beer.name)"
         />
       </div>
     </div>
