@@ -163,6 +163,11 @@ export function deleteParty(id: string): Promise<{ ok: boolean }> {
   return request(`/parties/${id}`, { method: 'DELETE' })
 }
 
+/** Убирает вечер только у себя — у остальных он остаётся */
+export function leaveParty(id: string): Promise<{ ok: boolean }> {
+  return request(`/parties/${id}/leave`, { method: 'POST' })
+}
+
 export function partyInvite(partyId: string): Promise<{ code: string; expiresAt: number }> {
   return request('/invites', { method: 'POST', body: JSON.stringify({ kind: 'party', partyId }) })
 }

@@ -526,6 +526,34 @@ async function deleteParty(ctx: Ctx, partyId: string): Promise<Response> {
   return json({ ok: true })
 }
 
+/**
+ * Уйти со стола: вечер пропадает у тебя вместе с твоими отметками в нём,
+ * у остальных остаётся. Общий вечер стирать в одиночку нельзя — это чужая
+ * история тоже. Если после ухода не осталось никого, вечер удаляется сам.
+ */
+async function leaveParty(ctx: Ctx, partyId: string): Promise<Response> {
+  if (!(await isMember(ctx, partyId))) return json({ error: 'вы не за этим столом' }, 404)
+
+  await ctx.env.DB.batch([
+    ctx.env.DB.prepare(`DELETE FROM party_entries WHERE party_id = ? AND tg_id = ?`).bind(partyId, ctx.user.id),
+    ctx.env.DB.prepare(`DELETE FROM party_members WHERE party_id = ? AND tg_id = ?`).bind(partyId, ctx.user.id),
+  ])
+
+  const left = await ctx.env.DB.prepare(`SELECT COUNT(*) AS n FROM party_members WHERE party_id = ?`)
+    .bind(partyId)
+    .first<{ n: number }>()
+
+  if ((left?.n ?? 0) === 0) {
+    await ctx.env.DB.batch([
+      ctx.env.DB.prepare(`DELETE FROM party_entries WHERE party_id = ?`).bind(partyId),
+      ctx.env.DB.prepare(`DELETE FROM invites WHERE party_id = ?`).bind(partyId),
+      ctx.env.DB.prepare(`DELETE FROM parties WHERE id = ?`).bind(partyId),
+    ])
+  }
+
+  return json({ ok: true })
+}
+
 async function closeParty(ctx: Ctx, partyId: string): Promise<Response> {
   const party = await ctx.env.DB.prepare(`SELECT host_id, ended_at FROM parties WHERE id = ?`)
     .bind(partyId)
@@ -570,6 +598,9 @@ async function route(ctx: Ctx): Promise<Response> {
 
   const partyClose = pathname.match(/^\/parties\/([A-Za-z0-9-]{36})\/close$/)
   if (method === 'POST' && partyClose) return closeParty(ctx, partyClose[1])
+
+  const partyLeave = pathname.match(/^\/parties\/([A-Za-z0-9-]{36})\/leave$/)
+  if (method === 'POST' && partyLeave) return leaveParty(ctx, partyLeave[1])
 
   return json({ error: 'неизвестный метод' }, 404)
 }

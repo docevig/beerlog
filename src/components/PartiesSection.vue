@@ -7,6 +7,7 @@ import {
   fetchParty,
   closeParty,
   deleteParty,
+  leaveParty,
   partyInvite,
   fetchPartyStats,
   inviteLink,
@@ -155,7 +156,7 @@ const past = ref<PartyState | null>(null)
 /** Удаление подтверждается вторым нажатием — отменить его уже нельзя */
 const confirmingId = ref<string | null>(null)
 
-async function removeParty(id: string) {
+async function removeParty(id: string, isHost: boolean) {
   if (confirmingId.value !== id) {
     confirmingId.value = id
     setTimeout(() => {
@@ -167,7 +168,7 @@ async function removeParty(id: string) {
   confirmingId.value = null
 
   try {
-    await deleteParty(id)
+    await (isHost ? deleteParty(id) : leaveParty(id))
     past.value = null
     demoPast.value = demoPast.value.filter((p) => p.id !== id)
     await load()
@@ -301,8 +302,11 @@ onMounted(load)
         <div class="sheet-inner">
           <PartyTable :state="past" :me-id="props.meId" />
 
-          <button v-if="past.party.host_id === props.meId" type="button" class="danger" @click="removeParty(past.party.id)">
-            {{ confirmingId === past.party.id ? 'точно удалить? нажми ещё раз' : 'удалить вечер' }}
+          <!-- Свой вечер стираем целиком, чужой можно только убрать у себя -->
+          <button type="button" class="danger" @click="removeParty(past.party.id, past.party.host_id === props.meId)">
+            <template v-if="confirmingId === past.party.id">точно? нажми ещё раз</template>
+            <template v-else-if="past.party.host_id === props.meId">удалить вечер</template>
+            <template v-else>убрать у себя</template>
           </button>
 
           <button type="button" class="dismiss" @click="past = null">закрыть</button>
