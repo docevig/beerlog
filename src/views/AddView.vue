@@ -6,6 +6,7 @@ import { BEER_STYLES, VOLUME_PRESETS, findStyle, styleTitle } from '../data/styl
 import { styleColor, textOn, subTextOn } from '../lib/srm'
 import { formatAbv, formatPortion } from '../lib/format'
 import { dayKey, todayKey } from '../lib/day'
+import { overflowRatio } from '../lib/foam'
 import { useEntries } from '../store/entries'
 
 const { entries, profile, add } = useEntries()
@@ -65,6 +66,22 @@ const allStyleOptions = computed<Choice[]>(() => BEER_STYLES.map((s) => toChoice
 
 /** Что уже выпито сегодня — контекст, который помогает решить, наливать ли ещё */
 const todayEntries = computed(() => entries.value.filter((e) => dayKey(e.ts) === todayKey()))
+
+/** Перелив за день: им же питается пена, доливающаяся на кнопку повтора */
+const spill = computed(() => overflowRatio(todayEntries.value.reduce((sum, e) => sum + e.ml, 0)))
+
+/**
+ * Натёки на кромке кнопки. Три кляксы вместо одной сплошной полосы:
+ * полоса во всю ширину читается как блик и режет экран пополам.
+ */
+const blobs = computed(() => {
+  const r = spill.value
+  return [
+    { left: 21, width: 14 + r * 30, height: 7 + r * 4 },
+    { left: 46, width: 11 + r * 24, height: 6 + r * 5 },
+    { left: 71, width: 12 + r * 26, height: 6 + r * 4 },
+  ]
+})
 
 /**
  * Последний СДЕЛАННЫЙ выбор, а не последняя по времени запись: отметка
@@ -205,6 +222,20 @@ async function save() {
 
     <div class="footer">
       <button v-if="lastChoice" type="button" class="repeat" @click="repeatLast">
+        <!--
+          Пена, добежавшая по стакану, доливается сюда: лужа растекается
+          по кромке кнопки тем шире, чем сильнее перебор, и капает дальше
+        -->
+        <span v-if="spill > 0" class="puddle" aria-hidden="true">
+          <span
+            v-for="b in blobs"
+            :key="b.left"
+            class="blob"
+            :style="{ left: `${b.left}%`, width: `${b.width}px`, height: `${b.height}px` }"
+          />
+          <span class="puddle-drop" />
+          <span class="puddle-drop late" />
+        </span>
         <span class="repeat-swatch" :style="{ background: styleColor(lastChoice.style) }" />
         ещё такое же: {{ styleTitle(lastChoice.style) }} {{ formatPortion(lastChoice.ml) }}
       </button>
@@ -282,6 +313,8 @@ async function save() {
 }
 /* Повтор прошлой отметки — сокращение самого частого сценария */
 .repeat {
+  position: relative;
+  overflow: visible;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -305,6 +338,66 @@ async function save() {
   height: 10px;
   border-radius: 2px;
   flex: none;
+}
+/*
+  Лужа пены на кромке кнопки: ширина — это перелив, а не декор.
+  Комки по краям сделаны тенями — ровный овал читался бы как блик.
+*/
+.puddle {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+/* Отдельный натёк: свисает с кромки, растекаясь тем шире, чем больше перебор */
+.blob {
+  position: absolute;
+  top: -3px;
+  background: #f7f2e4;
+  border-radius: 44% 40% 48% 42% / 62% 70% 32% 28%;
+  transition: width 620ms cubic-bezier(0.22, 1, 0.36, 1), height 620ms ease;
+}
+/* С краёв лужи срываются капли и падают дальше вниз */
+.puddle-drop {
+  position: absolute;
+  top: 4px;
+  left: 24%;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #fcf8ee;
+  opacity: 0;
+  animation: fall 3.6s ease-in infinite;
+}
+.puddle-drop.late {
+  left: auto;
+  right: 26%;
+  width: 5px;
+  height: 5px;
+  animation-delay: 1.8s;
+}
+@keyframes fall {
+  0% {
+    transform: translateY(0) scale(0.5);
+    opacity: 0;
+  }
+  15% {
+    transform: translateY(4px) scale(1);
+    opacity: 0.95;
+  }
+  70% {
+    transform: translateY(34px) scale(0.95);
+    opacity: 0.8;
+  }
+  100% {
+    transform: translateY(58px) scale(0.5);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .puddle-drop {
+    animation: none;
+    opacity: 0;
+  }
 }
 .footer {
   padding-bottom: 16px;

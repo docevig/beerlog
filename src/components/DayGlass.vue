@@ -4,11 +4,9 @@ import type { Entry } from '../types'
 import { srmColor } from '../lib/srm'
 import { findStyle } from '../data/styles'
 import { formatLitres } from '../lib/format'
+import { FULL_GLASS_ML, overflowRatio as overflowRatioOf } from '../lib/foam'
 
 const props = defineProps<{ entries: Entry[] }>()
-
-/** Полный стакан — два литра за вечер. Дальше пена лезет через край */
-const FULL_ML = 2000
 
 /** Геометрия силуэта пинты в координатах svg */
 const W = 92
@@ -17,22 +15,55 @@ const TOP_INSET = 4
 const BOTTOM_INSET = 13
 
 const totalMl = computed(() => props.entries.reduce((sum, e) => sum + e.ml, 0))
-const fillRatio = computed(() => Math.min(1, totalMl.value / FULL_ML))
-const overflowing = computed(() => totalMl.value > FULL_ML)
-
-/**
- * Насколько перебрали сверх полного стакана: 0 — ровно по край,
- * 1 — вдвое больше. Дальше не растим, иначе пена съест весь экран.
- */
-const overflowRatio = computed(() => {
-  if (totalMl.value <= FULL_ML) return 0
-  return Math.min(1, (totalMl.value - FULL_ML) / FULL_ML)
-})
+const fillRatio = computed(() => Math.min(1, totalMl.value / FULL_GLASS_ML))
+const overflowing = computed(() => totalMl.value > FULL_GLASS_ML)
+const overflowRatio = computed(() => overflowRatioOf(totalMl.value))
 
 /** Шапка поднимается, расползается вширь и свешивается по стенкам */
 const crownHeight = computed(() => 9 + overflowRatio.value * 17)
 const crownSpread = computed(() => overflowRatio.value * 11)
-const tongueLength = computed(() => overflowRatio.value * 52)
+
+/**
+ * Стакан сужается книзу, поэтому потёк не может идти отвесно —
+ * он обязан повторять наклон стенки, иначе висит сосулькой рядом.
+ * Коэффициент показывает, насколько сжата ширина на глубине y.
+ */
+function narrowing(y: number): number {
+  const halfTop = W / 2 - TOP_INSET
+  const halfAt = halfTop - (BOTTOM_INSET - TOP_INSET) * (y / H)
+  return halfAt / halfTop
+}
+
+/** Точка на глубине y для потёка, начавшегося в x0 на кромке */
+function alongWall(x0: number, y: number): number {
+  return W / 2 + (x0 - W / 2) * narrowing(y)
+}
+
+/** Потёки: позиция на кромке, длина и толщина. Длина растёт с переливом */
+const drips = computed(() => {
+  const r = overflowRatio.value
+  if (r <= 0) return []
+
+  const spots = [
+    { x: TOP_INSET + 3, factor: 1, width: 6 },
+    { x: W * 0.3, factor: 0.55, width: 4.5 },
+    { x: W * 0.68, factor: 0.75, width: 5 },
+    { x: W - TOP_INSET - 4, factor: 0.9, width: 5.5 },
+    { x: W * 0.48, factor: 0.35, width: 4 },
+  ]
+
+  return spots
+    .map((s) => {
+      const length = r * 62 * s.factor
+      return {
+        d: `M ${s.x} 0 L ${alongWall(s.x, length)} ${length}`,
+        width: s.width,
+        length,
+        tipX: alongWall(s.x, length),
+      }
+    })
+    .filter((d) => d.length > 5)
+})
 
 /** Пузыри шапки: чем больше перелив, тем крупнее и шире расставлены */
 const crownBubbles = computed(() => {
@@ -117,16 +148,13 @@ const silhouette = `M ${TOP_INSET} 0 L ${W - TOP_INSET} 0 L ${W - BOTTOM_INSET} 
         как парящая над стаканом крышка, а не как пена.
       -->
       <g v-if="overflowing" class="spill">
-        <!-- Языки пены сползают по внешним стенкам, удлиняясь с перебором -->
+        <!-- Потёки идут вдоль наклонной стенки, а не отвесно рядом с ней -->
         <path
-          v-if="tongueLength > 4"
-          class="tongue"
-          :d="`M ${TOP_INSET - crownSpread + 2} 0 q -2 ${tongueLength * 0.6} 2 ${tongueLength} q 4 -${tongueLength * 0.5} 5 -${tongueLength}`"
-        />
-        <path
-          v-if="tongueLength > 12"
-          class="tongue"
-          :d="`M ${W - TOP_INSET + crownSpread - 6} 0 q 1 ${tongueLength * 0.5} -2 ${tongueLength * 0.8} q 5 -${tongueLength * 0.4} 4 -${tongueLength * 0.8}`"
+          v-for="(d, i) in drips"
+          :key="i"
+          class="drip"
+          :d="d.d"
+          :stroke-width="d.width"
         />
 
         <g class="crown">
@@ -140,8 +168,14 @@ const silhouette = `M ${TOP_INSET} 0 L ${W - TOP_INSET} 0 L ${W - BOTTOM_INSET} 
           <circle v-for="(b, i) in crownBubbles" :key="i" :cx="b.cx" :cy="-crownHeight * 0.55" :r="b.r" />
         </g>
 
-        <circle class="drop" :cx="TOP_INSET - crownSpread + 4" :cy="tongueLength" r="3.2" />
-        <circle class="drop drop-late" :cx="W - TOP_INSET + crownSpread - 5" :cy="tongueLength * 0.8" r="2.6" />
+        <!-- Капля срывается с кончика самого длинного потёка -->
+        <circle
+          v-if="drips.length"
+          class="drop"
+          :cx="drips[0].tipX"
+          :cy="drips[0].length"
+          :r="drips[0].width / 2"
+        />
       </g>
 
       <!-- Мерные риски на четверть, половину и три четверти -->
@@ -192,10 +226,15 @@ const silhouette = `M ${TOP_INSET} 0 L ${W - TOP_INSET} 0 L ${W - BOTTOM_INSET} 
   Шапка не пульсирует: её размер — это показание, а не украшение.
   Двигается только то, что и в жизни движется, — стекающие капли.
 */
-.crown,
-.tongue {
+.crown {
   fill: #fcf8ee;
   transition: all 620ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.drip {
+  stroke: #fcf8ee;
+  stroke-linecap: round;
+  fill: none;
+  transition: d 620ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 .drop {
   fill: #fcf8ee;
