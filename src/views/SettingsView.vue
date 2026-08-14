@@ -6,6 +6,7 @@ import { apiAvailable, saveMyProfile, uploadAvatar, deleteAccount, forgetAvatar 
 import { compressImage } from '../lib/image'
 import { parseVolume, volumeHint } from '../lib/volume'
 import { VOLUME_PRESETS } from '../data/styles'
+import { VALUE_LIMIT } from '../storage/types'
 import { withPlural } from '../lib/format'
 import { tg } from '../lib/telegram'
 
@@ -46,8 +47,29 @@ const badge = computed(() => (icon.value ? `${icon.value}|${color.value}` : null
 
 const volumeHints = computed(() => volumes.value.map((v) => volumeHint(v)))
 
+/**
+ * Запас места в кружках, а не в ключах: «3 из 1024 ключей» — язык хранилища,
+ * а человеку важно, что писать можно ещё очень долго.
+ *
+ * Считаем по своим же записям: средняя длина берётся из последних пятидесяти,
+ * потому что она зависит от привычек — тот, кто заполняет название, пивоварню
+ * и заметку, тратит символы вдвое быстрее любителя двух тапов.
+ */
+const capacity = computed(() => {
+  const free = Math.max(0, 1024 - props.keys)
+
+  const sample = entries.value.slice(-50)
+  const average = sample.length ? JSON.stringify(sample).length / sample.length : 90
+  const perKey = Math.max(1, Math.floor(VALUE_LIMIT / average))
+
+  const total = free * perKey
+  // Точность тут ни к чему: округляем до тысяч, чтобы читалось как оценка
+  return total >= 10_000 ? Math.round(total / 1000) * 1000 : Math.round(total / 100) * 100
+})
+
 const storageLine = computed(
-  () => `в дневнике ${withPlural(entries.value.length, 'запись', 'записи', 'записей')}`,
+  () =>
+    `в дневнике ${withPlural(entries.value.length, 'запись', 'записи', 'записей')} · влезет ещё около ${capacity.value.toLocaleString('ru-RU')}`,
 )
 
 /**
