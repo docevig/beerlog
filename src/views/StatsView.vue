@@ -10,6 +10,8 @@ import { achievements } from '../lib/achievements'
 import { dayKey, dayStart, todayKey } from '../lib/day'
 import { formatLitres, formatDay, formatGrams } from '../lib/format'
 import { useCountUp } from '../lib/countUp'
+import { monthSummaryText, shareUrl } from '../lib/share'
+import { tg } from '../lib/telegram'
 
 const { entries } = useEntries()
 const { goToDay } = useUi()
@@ -67,6 +69,16 @@ const badges = computed(() => achievements(entries.value))
 
 // Главная цифра прокручивается от нуля — единственное место, где это уместно
 const monthLitres = useCountUp(() => totalMl(monthEntries.value) / 1000)
+
+function shareMonth() {
+  const text = monthSummaryText(monthEntries.value, month.value)
+  const url = shareUrl(text)
+
+  // Внутри Telegram диалог выбора чата открывает сам клиент
+  const app = tg()
+  if (app) app.openTelegramLink(url)
+  else window.open(url, '_blank')
+}
 </script>
 
 <template>
@@ -126,6 +138,8 @@ const monthLitres = useCountUp(() => totalMl(monthEntries.value) / 1000)
         <SrmRange :entries="entries" />
       </div>
 
+      <button type="button" class="share" @click="shareMonth">поделиться итогами месяца</button>
+
       <div v-if="badges.length" class="block">
         <div class="eyebrow">достижения</div>
         <div v-for="b in badges" :key="b.title" class="badge">
@@ -184,6 +198,21 @@ const monthLitres = useCountUp(() => totalMl(monthEntries.value) / 1000)
 .badge-detail {
   font-size: 11px;
   color: var(--text-faint);
+}
+.share {
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--accent-bright);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color 160ms ease, transform 100ms ease;
+}
+.share:active {
+  transform: scale(0.99);
+  border-color: var(--accent);
 }
 .empty {
   padding: 40px 0;

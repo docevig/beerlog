@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, nextTick } from 'vue'
 import EntryRow from '../components/EntryRow.vue'
+import EntryEditor from '../components/EntryEditor.vue'
 import { useEntries } from '../store/entries'
 import { useUi } from '../store/ui'
 import { dayKey, todayKey } from '../lib/day'
@@ -17,7 +18,6 @@ const pendingRemoval = ref<Entry | undefined>(undefined)
 let removalTimer: ReturnType<typeof setTimeout> | undefined
 
 const editing = ref<Entry | undefined>(undefined)
-const editMl = ref(0)
 
 /** Раскрытая строка; одновременно раскрыта только одна */
 const expandedId = ref<string | null>(null)
@@ -84,12 +84,11 @@ function startEdit(id: string) {
   const target = entries.value.find((e) => e.id === id)
   if (!target) return
   editing.value = target
-  editMl.value = target.ml
 }
 
-async function applyEdit() {
+async function applyEdit(patch: Partial<Entry>) {
   if (!editing.value) return
-  await update(editing.value.id, { ml: editMl.value })
+  await update(editing.value.id, patch)
   editing.value = undefined
 }
 </script>
@@ -145,14 +144,11 @@ async function applyEdit() {
       </div>
     </Transition>
 
-    <div v-if="editing" class="editor">
-      <div class="eyebrow">объём, мл</div>
-      <input v-model.number="editMl" type="number" class="input" />
-      <div class="editor-actions">
-        <button type="button" class="link" @click="editing = undefined">отмена</button>
-        <button type="button" class="primary" @click="applyEdit">сохранить</button>
+    <Teleport to="body">
+      <div v-if="editing" class="sheet" @click.self="editing = undefined">
+        <EntryEditor :entry="editing" @save="applyEdit" @cancel="editing = undefined" />
       </div>
-    </div>
+    </Teleport>
   </section>
 </template>
 
@@ -236,36 +232,19 @@ async function applyEdit() {
   font: inherit;
   cursor: pointer;
 }
-.editor {
+/* Редактор выезжает поверх всего: правка не должна терять место в ленте */
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  align-items: flex-end;
   padding: 12px;
-  border-radius: var(--radius);
-  background: var(--surface);
+  background: rgba(10, 8, 5, 0.7);
+  overflow-y: auto;
 }
-.editor-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.input {
+.sheet > * {
   width: 100%;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
-}
-.primary {
-  padding: 9px 18px;
-  border: 0;
-  border-radius: var(--radius);
-  background: var(--accent);
-  color: var(--on-accent);
-  font: inherit;
-  cursor: pointer;
 }
 
 /* Удаляемая строка схлопывается, а не пропадает рывком */

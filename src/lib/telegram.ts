@@ -10,6 +10,8 @@ export interface TgWebApp {
   ready(): void
   expand(): void
   onEvent(event: string, cb: () => void): void
+  openTelegramLink(url: string): void
+  initDataUnsafe?: { start_param?: string }
   colorScheme: 'light' | 'dark'
   themeParams: Record<string, string>
   version: string
