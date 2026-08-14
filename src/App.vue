@@ -65,9 +65,9 @@ const diagnostics = computed(() => {
   return parts.join(' · ')
 })
 
-const { load } = useEntries()
+const { load, entries: allEntries } = useEntries()
 const { focusDay } = useUi()
-const { refresh: refreshParty } = useParty()
+const { refresh: refreshParty, catchUpActive } = useParty()
 
 // Клик по дню в календаре сам перебрасывает на вкладку истории
 watch(focusDay, (day) => {
@@ -158,14 +158,25 @@ onMounted(async () => {
     только при открытии вкладки компании, и кружка, записанная сразу после
     старта приложения, на общий стол не уезжала совсем.
   */
-  if (apiAvailable()) {
-    const catchUpParty = () => {
-      if (document.visibilityState === 'visible') void refreshParty()
+  const meId = app?.initDataUnsafe?.user?.id
+  if (apiAvailable() && meId) {
+    /*
+      Сразу и сверяем свои строки вечера: кружка, записанная до того, как
+      приложение узнало о вечере, иначе так и осталась бы только в дневнике,
+      а на общем столе её ждали бы напрасно.
+    */
+    const syncParty = async () => {
+      await refreshParty()
+      await catchUpActive(meId, allEntries.value)
     }
 
-    void refreshParty()
+    const onReturn = () => {
+      if (document.visibilityState === 'visible') void syncParty()
+    }
+
+    void syncParty()
     // Вечер могли начать, пока приложение было свёрнуто
-    document.addEventListener('visibilitychange', catchUpParty)
+    document.addEventListener('visibilitychange', onReturn)
   }
 
   // Пришли по ссылке-приглашению: принимаем её и показываем компанию

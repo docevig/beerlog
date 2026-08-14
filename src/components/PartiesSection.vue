@@ -26,7 +26,7 @@ import { tg } from '../lib/telegram'
 
 const props = defineProps<{ meId: number }>()
 
-const { active, parties, refresh, mirrorInto, mirrorUpdate, mirrorRemove } = useParty()
+const { active, parties, refresh, reconcile } = useParty()
 const { entries } = useEntries()
 const { nameOf } = useFriendNames()
 
@@ -91,56 +91,6 @@ function loadDemo() {
   }
 }
 
-/**
- * Подтягивает свои строки стола к дневнику. Зеркалирование правок глотает
- * ошибки молча — иначе сбой сети мешал бы записать кружку, — поэтому одно
- * неудавшееся удаление осталось бы на столе навсегда. Здесь стол догоняет сам.
- *
- * Возвращает true, если что-то поменялось и состояние стоит перечитать.
- */
-async function reconcile(table: PartyState): Promise<boolean> {
-  // Пустой дневник — не повод сносить стол: вероятнее, что он просто не загрузился
-  if (entries.value.length === 0) return false
-
-  const diary = new Map(entries.value.map((e) => [e.id, e]))
-  let changed = false
-
-  for (const row of table.entries) {
-    if (row.tg_id !== props.meId) continue
-
-    const mine = diary.get(row.id)
-
-    if (!mine) {
-      await mirrorRemove(row.id)
-      changed = true
-    } else if (
-      mine.ml !== row.ml ||
-      mine.style !== row.style ||
-      mine.ts !== row.ts ||
-      (mine.name ?? null) !== row.name
-    ) {
-      await mirrorUpdate(mine)
-      changed = true
-    }
-  }
-
-  /*
-    Обратная сторона сверки: кружка, записанная до того, как приложение узнало
-    о вечере, на стол не уехала вовсе. Досылаем всё своё, что попало во время
-    вечера. Закрытый вечер не трогаем — сервер его и не примет.
-  */
-  if (table.party.ended_at === null) {
-    const onTable = new Set(table.entries.filter((e) => e.tg_id === props.meId).map((e) => e.id))
-
-    for (const mine of entries.value) {
-      if (mine.ts < table.party.started_at || onTable.has(mine.id)) continue
-      if (await mirrorInto(table.party.id, mine)) changed = true
-    }
-  }
-
-  return changed
-}
-
 async function load() {
   if (!apiAvailable()) {
     if (import.meta.env.DEV) loadDemo()
@@ -155,7 +105,9 @@ async function load() {
     // Состояние стола можно узнать только после того, как выяснили активный вечер
     if (active.value) {
       const table = await fetchParty(active.value.id)
-      state.value = (await reconcile(table)) ? await fetchParty(active.value.id) : table
+      state.value = (await reconcile(table, props.meId, entries.value))
+        ? await fetchParty(active.value.id)
+        : table
     }
   } catch (e) {
     failure.value = e instanceof Error ? e.message : String(e)
@@ -244,7 +196,7 @@ async function openPast(summary: PartySummary) {
   try {
     const table = await fetchParty(summary.id)
     // Прошлый вечер сверяем так же: расхождение могло остаться и в нём
-    past.value = (await reconcile(table)) ? await fetchParty(summary.id) : table
+    past.value = (await reconcile(table, props.meId, entries.value)) ? await fetchParty(summary.id) : table
   } catch (e) {
     failure.value = e instanceof Error ? e.message : String(e)
   }

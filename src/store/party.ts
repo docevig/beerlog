@@ -3,6 +3,7 @@ import type { Entry } from '../types'
 import {
   apiAvailable,
   listParties,
+  fetchParty,
   pushPartyEntry,
   updatePartyEntry,
   removePartyEntry,
@@ -95,6 +96,69 @@ export function useParty() {
     }
   }
 
+  /**
+   * Сверяет свои строки идущего вечера с дневником: досылает то, что не
+   * уехало, правит разошедшееся, убирает удалённое.
+   *
+   * Зовётся при запуске приложения, а не только на вкладке компании: кружку
+   * записывают на первом экране, и требовать ради синхронизации зайти
+   * куда-то ещё — значит терять записи у тех, кто туда не заходит.
+   *
+   * Возвращает true, если стол изменился и его стоит перечитать.
+   */
+  async function reconcile(table: PartyState, meId: number, diary: Entry[]): Promise<boolean> {
+    // Пустой дневник — не повод сносить стол: вероятнее, что он не загрузился
+    if (diary.length === 0) return false
+
+    const byId = new Map(diary.map((e) => [e.id, e]))
+    let changed = false
+
+    for (const row of table.entries) {
+      if (row.tg_id !== meId) continue
+
+      const mine = byId.get(row.id)
+
+      if (!mine) {
+        await mirrorRemove(row.id)
+        changed = true
+      } else if (
+        mine.ml !== row.ml ||
+        mine.style !== row.style ||
+        mine.ts !== row.ts ||
+        (mine.name ?? null) !== row.name
+      ) {
+        await mirrorUpdate(mine)
+        changed = true
+      }
+    }
+
+    // Закрытый вечер не догоняем: сервер новые строки в него не примет
+    if (table.party.ended_at === null) {
+      const onTable = new Set(table.entries.filter((e) => e.tg_id === meId).map((e) => e.id))
+
+      for (const mine of diary) {
+        if (mine.ts < table.party.started_at || onTable.has(mine.id)) continue
+        if (await mirrorInto(table.party.id, mine)) changed = true
+      }
+    }
+
+    return changed
+  }
+
+  /** Сверка идущего вечера сразу после запуска — без открытия вкладки компании */
+  async function catchUpActive(meId: number, diary: Entry[]): Promise<void> {
+    if (!apiAvailable() || !active.value) return
+
+    try {
+      const table = await fetchParty(active.value.id)
+      if (await reconcile(table, meId, diary)) {
+        activeState.value = await fetchParty(active.value.id)
+      }
+    } catch {
+      // Не вышло сейчас — выйдет при следующем открытии
+    }
+  }
+
   /** Убирает отметку со стола вслед за удалением из дневника */
   async function mirrorRemove(id: string): Promise<void> {
     if (!apiAvailable()) return
@@ -115,6 +179,8 @@ export function useParty() {
     mirrorInto,
     mirrorUpdate,
     mirrorRemove,
+    reconcile,
+    catchUpActive,
     setActive: (party: PartySummary | null) => (active.value = party),
   }
 }
