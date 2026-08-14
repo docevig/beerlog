@@ -17,6 +17,7 @@ import { dayKey } from '../lib/day'
 import { formatLitres, formatDay, withPlural } from '../lib/format'
 import { tg } from '../lib/telegram'
 import PartiesSection from '../components/PartiesSection.vue'
+import Avatar from '../components/Avatar.vue'
 
 const { entries, profile, saveProfile } = useEntries()
 
@@ -80,11 +81,6 @@ const openId = ref<number | null>(null)
 
 function toggle(id: number) {
   openId.value = openId.value === id ? null : id
-}
-
-/** Первая буква имени, когда аватара нет */
-function initial(name: string): string {
-  return name.trim().charAt(0).toUpperCase() || '?'
 }
 
 interface TasteCompare {
@@ -350,10 +346,7 @@ function tasteHint(friend: FriendTotals): string {
              а не второй экран итогов -->
         <div class="friend self">
           <div class="friend-head static">
-            <span class="avatar" :style="{ borderColor: srmColor(mine.avgSrm || 4) }">
-              <img v-if="myPhoto" :src="myPhoto" alt="" />
-              <span v-else class="initial">{{ myInitial }}</span>
-            </span>
+            <Avatar :tg-id="myId" :name="myInitial" :ring="srmColor(mine.avgSrm || 4)" :photo-url="myPhoto" />
             <span class="friend-body">
               <span class="friend-name">ты</span>
               <span class="friend-numbers">
@@ -368,10 +361,12 @@ function tasteHint(friend: FriendTotals): string {
         <div v-for="f in sortedFriends" :key="f.tg_id" class="friend">
           <button type="button" class="friend-head" @click="toggle(f.tg_id)">
             <!-- Обводка аватара — средний цвет месяца: вкус виден до раскрытия -->
-            <span class="avatar" :style="{ borderColor: srmColor(f.avg_srm || 4) }">
-              <img v-if="f.photo_url" :src="f.photo_url" :alt="f.name" />
-              <span v-else class="initial">{{ initial(f.name) }}</span>
-            </span>
+            <Avatar
+              :tg-id="f.tg_id"
+              :name="displayName(f)"
+              :ring="srmColor(f.avg_srm || 4)"
+              :photo-url="f.photo_url"
+            />
             <span class="friend-body">
               <span class="friend-name">{{ displayName(f) }}</span>
               <span class="friend-numbers">

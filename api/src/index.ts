@@ -182,6 +182,74 @@ async function listFriends(ctx: Ctx): Promise<Response> {
   return json({ friends: results })
 }
 
+/** Видеть фото можно только у своих: друзей и соседей по столу */
+async function maySeeAvatar(ctx: Ctx, targetId: number): Promise<boolean> {
+  if (targetId === ctx.user.id) return true
+
+  const [low, high] = pair(ctx.user.id, targetId)
+  const friend = await ctx.env.DB.prepare(
+    `SELECT 1 AS ok FROM friendships WHERE low_id = ? AND high_id = ?`,
+  )
+    .bind(low, high)
+    .first()
+
+  if (friend) return true
+
+  const together = await ctx.env.DB.prepare(
+    `SELECT 1 AS ok
+       FROM party_members mine
+       JOIN party_members theirs ON theirs.party_id = mine.party_id
+      WHERE mine.tg_id = ? AND theirs.tg_id = ?
+      LIMIT 1`,
+  )
+    .bind(ctx.user.id, targetId)
+    .first()
+
+  return together !== null
+}
+
+/**
+ * Отдаёт фото профиля картинкой.
+ *
+ * Напрямую ссылку Telegram отдать нельзя: она содержит токен бота
+ * (api.telegram.org/file/bot<TOKEN>/...). Поэтому файл забирает Worker
+ * и переливает клиенту, а токен остаётся на сервере.
+ */
+async function avatar(ctx: Ctx, targetId: number): Promise<Response> {
+  if (!(await maySeeAvatar(ctx, targetId))) {
+    return json({ error: 'это не ваш человек' }, 403)
+  }
+
+  const api = `https://api.telegram.org/bot${ctx.env.BOT_TOKEN}`
+
+  const photos = (await (await fetch(`${api}/getUserProfilePhotos?user_id=${targetId}&limit=1`)).json()) as {
+    ok: boolean
+    result?: { total_count: number; photos: { file_id: string; width: number }[][] }
+  }
+
+  const smallest = photos.result?.photos?.[0]?.[0]
+  if (!photos.ok || !smallest) return json({ error: 'фото нет' }, 404)
+
+  const file = (await (await fetch(`${api}/getFile?file_id=${smallest.file_id}`)).json()) as {
+    ok: boolean
+    result?: { file_path: string }
+  }
+
+  if (!file.ok || !file.result) return json({ error: 'фото недоступно' }, 404)
+
+  const image = await fetch(`https://api.telegram.org/file/bot${ctx.env.BOT_TOKEN}/${file.result.file_path}`)
+  if (!image.ok) return json({ error: 'фото недоступно' }, 404)
+
+  return new Response(image.body, {
+    headers: {
+      'content-type': image.headers.get('content-type') ?? 'image/jpeg',
+      // Фото профиля меняется редко — сутки кэша экономят обращения к Bot API
+      'cache-control': 'private, max-age=86400',
+      ...CORS_HEADERS,
+    },
+  })
+}
+
 /** Дружба рвётся с обеих сторон сразу: односторонней она не бывает */
 async function removeFriend(ctx: Ctx, friendId: number): Promise<Response> {
   const [low, high] = pair(ctx.user.id, friendId)
@@ -486,6 +554,9 @@ async function route(ctx: Ctx): Promise<Response> {
 
   const friend = pathname.match(/^\/friends\/(\d{1,20})$/)
   if (method === 'DELETE' && friend) return removeFriend(ctx, Number(friend[1]))
+
+  const avatarPath = pathname.match(/^\/avatar\/(\d{1,20})$/)
+  if (method === 'GET' && avatarPath) return avatar(ctx, Number(avatarPath[1]))
 
   const accept = pathname.match(/^\/invites\/([A-Za-z0-9_-]{1,64})\/accept$/)
   if (method === 'POST' && accept) return acceptInvite(ctx, accept[1])

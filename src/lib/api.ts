@@ -171,6 +171,39 @@ export function acceptInvite(code: string): Promise<{ ok: boolean; kind: string 
   return request(`/invites/${encodeURIComponent(code)}/accept`, { method: 'POST' })
 }
 
+/**
+ * Фото профиля. Запрашиваем через fetch, а не подставляем адрес в img:
+ * серверу нужна подпись в заголовке, а тег картинки её передать не умеет.
+ */
+const avatarCache = new Map<number, string | null>()
+
+export async function loadAvatar(tgId: number): Promise<string | null> {
+  if (avatarCache.has(tgId)) return avatarCache.get(tgId) ?? null
+
+  const initData = tg()?.initData
+  if (!initData) return null
+
+  try {
+    const response = await fetch(`${API_URL}/avatar/${tgId}`, {
+      headers: { 'x-init-data': initData },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    })
+
+    if (!response.ok) {
+      avatarCache.set(tgId, null)
+      return null
+    }
+
+    const url = URL.createObjectURL(await response.blob())
+    avatarCache.set(tgId, url)
+    return url
+  } catch {
+    // Нет фото — не беда, останется кружок с инициалом
+    avatarCache.set(tgId, null)
+    return null
+  }
+}
+
 /** Ссылка-приглашение: код уезжает в start_param и прилетает обратно при открытии */
 export function inviteLink(code: string): string {
   return `https://t.me/beerlogs_bot/app?startapp=${code}`
