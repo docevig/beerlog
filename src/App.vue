@@ -103,9 +103,13 @@ function trackViewport(app: ReturnType<typeof tg>): void {
   }
 
   const apply = () => {
-    // При открытой клавиатуре окно ниже экрана — берём меньшее из двух
-    const reported = app.viewportHeight ?? 0
-    const height = reported > 0 ? Math.min(reported, window.innerHeight) : window.innerHeight
+    /*
+      Именно стабильная высота — та, что БЕЗ клавиатуры. Обычная viewportHeight
+      меняется на каждом кадре её появления, и раскладка, привязанная к ней,
+      дёргается. Поле, ушедшее под клавиатуру, доскроллит focusin ниже.
+    */
+    const stable = app.viewportStableHeight ?? app.viewportHeight ?? window.innerHeight
+    const height = stable > 0 ? stable : window.innerHeight
 
     document.documentElement.style.setProperty('--app-height', `${Math.round(height)}px`)
     windowSize.value = `окно ${window.innerWidth}×${Math.round(height)}`
@@ -114,6 +118,19 @@ function trackViewport(app: ReturnType<typeof tg>): void {
   apply()
   app.onEvent('viewportChanged', apply)
   window.addEventListener('resize', apply)
+
+  /*
+    Клавиатура перекрывает нижнюю часть окна, а высота приложения на неё
+    намеренно не реагирует. Поэтому сфокусированное поле подводим к центру
+    сами — с задержкой, иначе прокрутка случится раньше, чем клавиатура
+    закончит выезжать, и поле снова окажется под ней.
+  */
+  document.addEventListener('focusin', (event) => {
+    const target = event.target
+    if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLTextAreaElement)) return
+
+    setTimeout(() => target.scrollIntoView({ block: 'center', behavior: 'smooth' }), 320)
+  })
 }
 
 onMounted(async () => {
