@@ -211,7 +211,7 @@ async function invite() {
   try {
     const { code } = await createInvite()
     const link = inviteLink(code)
-    const text = 'веду дневник пива, давай сравним — ссылка одноразовая и живёт сутки'
+    const text = 'веду дневник пива, давай сравним — ссылка живёт сутки'
     const app = tg()
     const url = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`
     if (app) app.openTelegramLink(url)
@@ -439,7 +439,7 @@ function tasteHint(friend: FriendTotals): string {
       <button type="button" class="primary" :disabled="inviting" @click="invite">
         {{ inviting ? 'готовим ссылку…' : 'позвать друга' }}
       </button>
-      <p class="fineprint">ссылка одноразовая и сгорает через сутки</p>
+      <p class="fineprint">ссылка работает сутки — по ней зайдут все, кому её переслали</p>
 
       <PartiesSection :me-id="myId" />
     </template>
