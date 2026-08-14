@@ -523,6 +523,34 @@ async function isMember(ctx: Ctx, partyId: string): Promise<boolean> {
   return row !== null
 }
 
+/**
+ * Правка своей отметки на столе. Вечер спрашивать незачем: строка
+ * принадлежит человеку, а не вечеру, и «это была не такая кружка» должно
+ * доезжать до общего стола так же, как до дневника, — хоть неделю спустя.
+ * Чужую строку запрос не найдёт: владелец в условии.
+ */
+async function updateOwnEntry(ctx: Ctx, entryId: string): Promise<Response> {
+  const body = (await ctx.request.json()) as { ts?: number; ml?: number; style?: string; name?: string }
+  if (!body.ml || body.ml <= 0 || !body.style) return json({ error: 'нужны объём и стиль' }, 400)
+
+  await ctx.env.DB.prepare(
+    `UPDATE party_entries SET ts = ?, ml = ?, style = ?, name = ? WHERE id = ? AND tg_id = ?`,
+  )
+    .bind(body.ts ?? Date.now(), Math.round(body.ml), body.style, body.name ?? null, entryId, ctx.user.id)
+    .run()
+
+  return json({ ok: true })
+}
+
+/** Удаление своей отметки со стола. Итоги вечера считаются на лету и сойдутся сами */
+async function removeOwnEntry(ctx: Ctx, entryId: string): Promise<Response> {
+  await ctx.env.DB.prepare(`DELETE FROM party_entries WHERE id = ? AND tg_id = ?`)
+    .bind(entryId, ctx.user.id)
+    .run()
+
+  return json({ ok: true })
+}
+
 async function addPartyEntry(ctx: Ctx, partyId: string): Promise<Response> {
   if (!(await isMember(ctx, partyId))) return json({ error: 'вы не за этим столом' }, 403)
 
@@ -785,6 +813,11 @@ async function route(ctx: Ctx): Promise<Response> {
 
   const partyLeave = pathname.match(/^\/parties\/([A-Za-z0-9-]{36})\/leave$/)
   if (method === 'POST' && partyLeave) return leaveParty(ctx, partyLeave[1])
+
+  // Своя отметка правится и стирается без указания вечера: идентификатор общий с дневником
+  const ownEntry = pathname.match(/^\/entries\/([A-Za-z0-9-]{1,64})$/)
+  if (method === 'POST' && ownEntry) return updateOwnEntry(ctx, ownEntry[1])
+  if (method === 'DELETE' && ownEntry) return removeOwnEntry(ctx, ownEntry[1])
 
   return json({ error: 'неизвестный метод' }, 404)
 }

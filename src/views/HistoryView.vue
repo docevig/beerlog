@@ -4,6 +4,7 @@ import EntryRow from '../components/EntryRow.vue'
 import EntryEditor from '../components/EntryEditor.vue'
 import { useEntries } from '../store/entries'
 import { useUi } from '../store/ui'
+import { useParty } from '../store/party'
 import { dayKey, todayKey } from '../lib/day'
 import { totalMl, totalAlcoholGrams } from '../lib/stats'
 import { formatLitres, formatDay, formatGrams, withPlural } from '../lib/format'
@@ -13,6 +14,8 @@ import type { Entry } from '../types'
 
 const { entries, remove, update, restore, importMany } = useEntries()
 const { takeFocusDay } = useUi()
+// Стол вечеринки повторяет судьбу отметки: иначе он расходится с дневником
+const { mirror, mirrorUpdate, mirrorRemove } = useParty()
 
 /**
  * Выгрузка и загрузка скрыты до появления экрана настроек: место в конце
@@ -104,6 +107,7 @@ function askRemove(id: string) {
 
   pendingRemoval.value = target
   void remove(id)
+  void mirrorRemove(id)
 
   clearTimeout(removalTimer)
   removalTimer = setTimeout(() => (pendingRemoval.value = undefined), 5000)
@@ -116,6 +120,8 @@ async function undoRemove() {
   pendingRemoval.value = undefined
   clearTimeout(removalTimer)
   await restore(target)
+  // Возврат на стол — только если отметка из идущего вечера, это решает mirror
+  void mirror(target)
 }
 
 function startEdit(id: string) {
@@ -126,8 +132,13 @@ function startEdit(id: string) {
 
 async function applyEdit(patch: Partial<Entry>) {
   if (!editing.value) return
-  await update(editing.value.id, patch)
+
+  const id = editing.value.id
+  await update(id, patch)
   editing.value = undefined
+
+  const updated = entries.value.find((e) => e.id === id)
+  if (updated) void mirrorUpdate(updated)
 }
 </script>
 

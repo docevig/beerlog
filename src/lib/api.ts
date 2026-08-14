@@ -155,6 +155,21 @@ export function pushPartyEntry(
   return request(`/parties/${id}/entries`, { method: 'POST', body: JSON.stringify(entry) })
 }
 
+/**
+ * Правит свою отметку на столе. Вечер не указывается: идентификатор
+ * отметки общий с дневником, и править её можно даже в закрытом вечере.
+ */
+export function updatePartyEntry(
+  id: string,
+  entry: { ts: number; ml: number; style: string; name?: string },
+): Promise<{ ok: boolean }> {
+  return request(`/entries/${encodeURIComponent(id)}`, { method: 'POST', body: JSON.stringify(entry) })
+}
+
+export function removePartyEntry(id: string): Promise<{ ok: boolean }> {
+  return request(`/entries/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
 export function closeParty(id: string): Promise<{ ok: boolean }> {
   return request(`/parties/${id}/close`, { method: 'POST' })
 }
