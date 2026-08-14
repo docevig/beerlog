@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { loadAvatar } from '../lib/api'
 
 const props = defineProps<{
@@ -10,6 +10,25 @@ const props = defineProps<{
 }>()
 
 const src = ref<string | null>(null)
+
+/**
+ * Цвета заглушек. У большинства фото закрыто настройками приватности,
+ * поэтому кружок с буквой — обычное состояние, а не исключение:
+ * пусть он хотя бы будет узнаваемым.
+ */
+const PLACEHOLDER_COLORS = [
+  { bg: '#8E2900', ink: '#FFD9B8' },
+  { bg: '#0F6E56', ink: '#CFF3E6' },
+  { bg: '#534AB7', ink: '#DCD9FA' },
+  { bg: '#993C1D', ink: '#FFDCCB' },
+  { bg: '#185FA5', ink: '#CFE4FB' },
+  { bg: '#993556', ink: '#FBD5E2' },
+  { bg: '#3B6D11', ink: '#DCF0C2' },
+  { bg: '#854F0B', ink: '#FBE3BC' },
+]
+
+/** Цвет закреплён за человеком: один и тот же id всегда даёт один оттенок */
+const palette = computed(() => PLACEHOLDER_COLORS[Math.abs(props.tgId) % PLACEHOLDER_COLORS.length])
 
 /**
  * Фото всегда берём у своего сервера.
@@ -34,9 +53,12 @@ const initial = (name: string) => name.trim().charAt(0).toUpperCase() || '?'
 </script>
 
 <template>
-  <span class="avatar" :style="{ borderColor: ring }">
+  <span
+    class="avatar"
+    :style="{ borderColor: ring, background: src ? undefined : palette.bg }"
+  >
     <img v-if="src" :src="src" :alt="name" @error="onImageError" />
-    <span v-else class="initial">{{ initial(name) }}</span>
+    <span v-else class="initial" :style="{ color: palette.ink }">{{ initial(name) }}</span>
   </span>
 </template>
 
@@ -62,6 +84,5 @@ const initial = (name: string) => name.trim().charAt(0).toUpperCase() || '?'
   font-family: var(--font-display);
   font-weight: 600;
   font-size: 15px;
-  color: var(--text-dim);
 }
 </style>
