@@ -21,7 +21,23 @@ const TABS: { id: Tab; title: string }[] = [
   { id: 'friends', title: 'компания' },
 ]
 
+/**
+ * Справка по разделу. Говорим о том, чего на экране не видно: границе суток,
+ * происхождении коллекции, общем столе. Перечислять кнопки смысла нет — они
+ * и так перед глазами.
+ */
+const HINTS: Record<Tab, string> = {
+  add: 'два тапа — объём и стиль — и кружка записана. Название, пивоварня, цена и этикетка прячутся под «добавить подробности». День здесь начинается в 6 утра, поэтому ночная кружка попадает во вчерашний вечер.',
+  history:
+    'все отметки по дням, свежие сверху. Тап по записи раскрывает её: там правка и удаление. Удалил случайно — пять секунд на отмену.',
+  stats:
+    'месяц или год целиком. Коллекция внизу собирается сама из названий, которые ты указывал в отметках. Кнопка отправляет итоги месяца картинкой в любой чат.',
+  friends:
+    'друзья и общие вечера. Пока вечер идёт, отметки всех участников видны за одним столом; твою запись правишь и удаляешь только ты. Сравнение — по вкусам, а не по литрам.',
+}
+
 const tab = ref<Tab>('add')
+const hintOpen = ref(false)
 const synced = ref(true)
 const ready = ref(false)
 const failure = ref('')
@@ -37,6 +53,9 @@ const { focusDay } = useUi()
 watch(focusDay, (day) => {
   if (day) tab.value = 'history'
 })
+
+// Справка закрывается при переходе: она про раздел, а не про приложение целиком
+watch(tab, () => (hintOpen.value = false))
 
 const currentView = computed(() => {
   if (tab.value === 'add') return AddView
@@ -104,6 +123,21 @@ onMounted(async () => {
     <p v-if="failure" class="warning">хранилище недоступно: {{ failure }}</p>
     <p v-if="invited" class="warning accent">{{ invited }}</p>
 
+    <div class="topbar">
+      <button
+        type="button"
+        class="help"
+        :class="{ on: hintOpen }"
+        :aria-expanded="hintOpen"
+        aria-label="что здесь"
+        @click="hintOpen = !hintOpen"
+      >
+        ?
+      </button>
+    </div>
+
+    <p v-if="hintOpen" class="hint-box">{{ HINTS[tab] }}</p>
+
     <main class="content">
       <Bubbles v-if="tab === 'add'" />
       <p v-if="!ready" class="loading">загружаем историю</p>
@@ -139,6 +173,38 @@ onMounted(async () => {
   color: var(--text-dim);
   font-size: 12px;
   text-align: center;
+}
+/* Полоса под знак вопроса: своей шапки у экранов нет, а место занимать нечем */
+.topbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 12px 0;
+}
+.help {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: none;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.help.on {
+  border-color: var(--accent);
+  color: var(--accent-bright);
+}
+.hint-box {
+  margin: 6px 16px 0;
+  padding: 11px 13px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.45;
 }
 .content {
   position: relative;
