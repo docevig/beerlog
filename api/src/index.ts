@@ -282,45 +282,65 @@ async function uploadPhoto(ctx: Ctx): Promise<Response> {
   if (bytes.byteLength === 0) return json({ error: 'пустой файл' }, 400)
   if (bytes.byteLength > MAX_PHOTO_BYTES) return json({ error: 'снимок слишком большой' }, 413)
 
-  const extension = type.includes('webp') ? 'webp' : 'jpg'
+  /*
+    Имя и тип нарочно обезличены. Файл с расширением .webp Telegram считает
+    стикером и возвращает его полем sticker, а не document — из-за чего снимок
+    терялся сразу после отправки. Настоящий тип хранится у нас и подставляется
+    при выдаче.
+  */
+  const api = `https://api.telegram.org/bot${ctx.env.BOT_TOKEN}`
   const form = new FormData()
   form.append('chat_id', String(ctx.user.id))
   form.append('disable_notification', 'true')
-  form.append('document', new Blob([bytes], { type }), `label.${extension}`)
+  form.append('document', new Blob([bytes], { type: 'application/octet-stream' }), 'label.bin')
 
   const sent = (await (
-    await fetch(`https://api.telegram.org/bot${ctx.env.BOT_TOKEN}/sendDocument`, {
-      method: 'POST',
-      body: form,
-    })
+    await fetch(`${api}/sendDocument`, { method: 'POST', body: form })
   ).json()) as {
     ok: boolean
     description?: string
-    result?: { message_id: number; document?: { file_id: string } }
+    result?: {
+      message_id: number
+      document?: { file_id: string }
+      sticker?: { file_id: string }
+      photo?: { file_id: string }[]
+    }
   }
 
-  if (!sent.ok || !sent.result?.document?.file_id) {
-    log('не удалось сохранить снимок', { description: sent.description })
-    // Чаще всего — пользователь запретил боту писать ему
+  // Разбор классификации на стороне Telegram: она задана не нами, поэтому смотрим все поля
+  const message = sent.result
+  const photo = message?.photo
+  const fileId =
+    message?.document?.file_id ??
+    message?.sticker?.file_id ??
+    (photo && photo.length ? photo[photo.length - 1].file_id : undefined)
+
+  // Сообщение убираем при любом исходе, иначе неудача оставляет снимок в переписке
+  if (message?.message_id) {
+    ctx.waitUntil(
+      fetch(`${api}/deleteMessage`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: ctx.user.id, message_id: message.message_id }),
+      }).then(() => undefined),
+    )
+  }
+
+  if (!sent.ok || !fileId) {
+    log('не удалось сохранить снимок', {
+      description: sent.description,
+      // Поля ответа: по ним видно, чем Telegram счёл файл на этот раз
+      fields: message ? Object.keys(message) : [],
+    })
+    // Другая частая причина — пользователь запретил боту писать ему
     return json({ error: 'не удалось сохранить снимок' }, 502)
   }
 
-  const fileId = sent.result.document.file_id
-
-  // Убираем сообщение из переписки: идентификатор файла продолжает работать
-  ctx.waitUntil(
-    fetch(`https://api.telegram.org/bot${ctx.env.BOT_TOKEN}/deleteMessage`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ chat_id: ctx.user.id, message_id: sent.result.message_id }),
-    }).then(() => undefined),
-  )
-
   await ctx.env.DB.prepare(
-    `INSERT INTO photos (file_id, tg_id, beer_key, bytes, created_at) VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT (file_id) DO NOTHING`,
+    `INSERT INTO photos (file_id, tg_id, beer_key, bytes, mime, created_at) VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (file_id) DO UPDATE SET beer_key = excluded.beer_key`,
   )
-    .bind(fileId, ctx.user.id, beerKey, bytes.byteLength, Date.now())
+    .bind(fileId, ctx.user.id, beerKey, bytes.byteLength, type, Date.now())
     .run()
 
   return json({ fileId })
@@ -328,9 +348,9 @@ async function uploadPhoto(ctx: Ctx): Promise<Response> {
 
 /** Отдаёт снимок. Владельца проверяем по базе: идентификатор чужим не отдаём */
 async function getPhoto(ctx: Ctx, fileId: string): Promise<Response> {
-  const own = await ctx.env.DB.prepare(`SELECT 1 AS ok FROM photos WHERE file_id = ? AND tg_id = ?`)
+  const own = await ctx.env.DB.prepare(`SELECT mime FROM photos WHERE file_id = ? AND tg_id = ?`)
     .bind(fileId, ctx.user.id)
-    .first()
+    .first<{ mime: string | null }>()
 
   if (!own) return json({ error: 'это не ваш снимок' }, 403)
 
@@ -347,7 +367,8 @@ async function getPhoto(ctx: Ctx, fileId: string): Promise<Response> {
 
   return new Response(image.body, {
     headers: {
-      'content-type': image.headers.get('content-type') ?? 'image/webp',
+      // Тип берём из базы: файловый сервер отдаёт обезличенные байты
+      'content-type': own.mime ?? 'image/webp',
       // Снимок неизменен: каждый новый получает свой идентификатор
       'cache-control': 'private, max-age=31536000, immutable',
       ...CORS_HEADERS,
