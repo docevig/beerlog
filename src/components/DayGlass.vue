@@ -19,9 +19,12 @@ const fillRatio = computed(() => Math.min(1, totalMl.value / FULL_GLASS_ML))
 const overflowing = computed(() => totalMl.value > FULL_GLASS_ML)
 const overflowRatio = computed(() => overflowRatioOf(totalMl.value))
 
-/** Шапка поднимается, расползается вширь и свешивается по стенкам */
-const crownHeight = computed(() => 9 + overflowRatio.value * 17)
-const crownSpread = computed(() => overflowRatio.value * 11)
+/**
+ * Шапка поднимается над кромкой, но почти не расползается вбок:
+ * заметный вынос за стенки превращает пену в шарик мороженого.
+ */
+const crownHeight = computed(() => 8 + overflowRatio.value * 13)
+const crownSpread = computed(() => overflowRatio.value * 3.5)
 
 /**
  * Стакан сужается книзу, поэтому потёк не может идти отвесно —
@@ -72,12 +75,13 @@ const crownBubbles = computed(() => {
   const span = right - left
   const base = crownHeight.value
 
+  // Крайние пузыри мельче и подобраны внутрь, чтобы силуэт держал ширину стакана
   return [
-    { cx: left + span * 0.1, r: base * 0.42 },
-    { cx: left + span * 0.3, r: base * 0.58 },
-    { cx: left + span * 0.52, r: base * 0.64 },
-    { cx: left + span * 0.73, r: base * 0.55 },
-    { cx: left + span * 0.91, r: base * 0.4 },
+    { cx: left + span * 0.11, r: base * 0.34 },
+    { cx: left + span * 0.32, r: base * 0.46 },
+    { cx: left + span * 0.53, r: base * 0.5 },
+    { cx: left + span * 0.73, r: base * 0.44 },
+    { cx: left + span * 0.9, r: base * 0.33 },
   ]
 })
 
