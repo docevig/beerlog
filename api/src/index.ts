@@ -17,16 +17,27 @@ interface Ctx {
   request: Request
 }
 
+const CORS_HEADERS = {
+  'access-control-allow-origin': ALLOWED_ORIGIN,
+  'access-control-allow-headers': 'content-type, x-init-data',
+  'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
+  'access-control-max-age': '86400',
+}
+
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: {
-      'content-type': 'application/json; charset=utf-8',
-      'access-control-allow-origin': ALLOWED_ORIGIN,
-      'access-control-allow-headers': 'content-type, x-init-data',
-      'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
-    },
+    headers: { 'content-type': 'application/json; charset=utf-8', ...CORS_HEADERS },
   })
+}
+
+/**
+ * Ответ на предварительный запрос. Тело здесь недопустимо: статус 204
+ * означает «без содержимого», и Response с телом на нём падает —
+ * из-за чего до самого запроса дело вообще не доходило.
+ */
+function preflight(): Response {
+  return new Response(null, { status: 204, headers: CORS_HEADERS })
 }
 
 function log(message: string, extra: Record<string, unknown> = {}): void {
@@ -447,7 +458,7 @@ async function route(ctx: Ctx): Promise<Response> {
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    if (request.method === 'OPTIONS') return json({}, 204)
+    if (request.method === 'OPTIONS') return preflight()
 
     try {
       const initData = request.headers.get('x-init-data') ?? ''
