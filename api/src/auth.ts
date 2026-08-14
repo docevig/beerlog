@@ -49,12 +49,41 @@ async function equalsSafely(a: string, b: string): Promise<boolean> {
  * подпись — HMAC от строки проверки этим секретом. Идентификатор
  * пользователя берётся ТОЛЬКО отсюда и никогда из тела запроса.
  */
-export async function verifyInitData(initData: string, botToken: string): Promise<VerifiedInit | null> {
-  if (!initData) return null
+export type VerifyFailure =
+  | 'no-init-data'
+  | 'no-hash'
+  | 'bad-token'
+  | 'hash-mismatch'
+  | 'stale'
+  | 'no-user'
+
+export interface VerifyResult {
+  ok: boolean
+  reason?: VerifyFailure
+  data?: VerifiedInit
+  /** Диагностика без секретов: помогает понять, что не так, по логам */
+  details?: Record<string, unknown>
+}
+
+/** Токен бота выглядит как «1234567890:AA...» — проверяем форму, не значение */
+function looksLikeToken(token: string): boolean {
+  return /^\d{6,}:[A-Za-z0-9_-]{30,}$/.test(token)
+}
+
+export async function verifyInitDataDetailed(initData: string, botToken: string): Promise<VerifyResult> {
+  if (!initData) return { ok: false, reason: 'no-init-data' }
+
+  if (!looksLikeToken(botToken)) {
+    return {
+      ok: false,
+      reason: 'bad-token',
+      details: { tokenLength: botToken.length, hasColon: botToken.includes(':') },
+    }
+  }
 
   const params = new URLSearchParams(initData)
   const providedHash = params.get('hash')
-  if (!providedHash) return null
+  if (!providedHash) return { ok: false, reason: 'no-hash', details: { keys: [...params.keys()] } }
 
   params.delete('hash')
   // Signature относится к третьесторонней проверке Ed25519 и в строку не входит
@@ -68,23 +97,36 @@ export async function verifyInitData(initData: string, botToken: string): Promis
   const secret = await hmac(encoder.encode('WebAppData'), botToken)
   const expected = toHex(await hmac(secret, checkString))
 
-  if (!(await equalsSafely(expected, providedHash))) return null
+  if (!(await equalsSafely(expected, providedHash))) {
+    return {
+      ok: false,
+      reason: 'hash-mismatch',
+      // Хвосты хешей безопасны и позволяют отличить «не тот токен» от «сломанной строки»
+      details: {
+        keys: [...params.keys()],
+        expectedTail: expected.slice(-6),
+        providedTail: providedHash.slice(-6),
+      },
+    }
+  }
 
   const authDate = Number(params.get('auth_date'))
-  if (!Number.isFinite(authDate)) return null
-  if (Math.floor(Date.now() / 1000) - authDate > MAX_AGE_SECONDS) return null
+  if (!Number.isFinite(authDate)) return { ok: false, reason: 'stale' }
+
+  const age = Math.floor(Date.now() / 1000) - authDate
+  if (age > MAX_AGE_SECONDS) return { ok: false, reason: 'stale', details: { ageSeconds: age } }
 
   const rawUser = params.get('user')
-  if (!rawUser) return null
+  if (!rawUser) return { ok: false, reason: 'no-user' }
 
   let parsed: { id?: number; first_name?: string; last_name?: string; username?: string; photo_url?: string }
   try {
     parsed = JSON.parse(rawUser)
   } catch {
-    return null
+    return { ok: false, reason: 'no-user' }
   }
 
-  if (typeof parsed.id !== 'number') return null
+  if (typeof parsed.id !== 'number') return { ok: false, reason: 'no-user' }
 
   const name =
     [parsed.first_name, parsed.last_name].filter(Boolean).join(' ') ||
@@ -92,7 +134,16 @@ export async function verifyInitData(initData: string, botToken: string): Promis
     `id${parsed.id}`
 
   return {
-    user: { id: parsed.id, name, photoUrl: parsed.photo_url },
-    startParam: params.get('start_param') ?? undefined,
+    ok: true,
+    data: {
+      user: { id: parsed.id, name, photoUrl: parsed.photo_url },
+      startParam: params.get('start_param') ?? undefined,
+    },
   }
+}
+
+/** Прежняя короткая форма — для мест, где причина неважна */
+export async function verifyInitData(initData: string, botToken: string): Promise<VerifiedInit | null> {
+  const result = await verifyInitDataDetailed(initData, botToken)
+  return result.ok ? (result.data ?? null) : null
 }

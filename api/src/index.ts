@@ -1,4 +1,4 @@
-import { verifyInitData, type TgUser } from './auth'
+import { verifyInitDataDetailed, type TgUser } from './auth'
 
 /** Единственный источник, которому разрешено обращаться к API */
 const ALLOWED_ORIGIN = 'https://docevig.github.io'
@@ -462,17 +462,21 @@ export default {
 
     try {
       const initData = request.headers.get('x-init-data') ?? ''
-      const verified = await verifyInitData(initData, env.BOT_TOKEN)
+      const verified = await verifyInitDataDetailed(initData, env.BOT_TOKEN)
 
-      if (!verified) {
-        log('отклонена неподписанная попытка', { path: new URL(request.url).pathname })
-        return json({ error: 'подпись не подтверждена' }, 401)
+      if (!verified.ok || !verified.data) {
+        log('отклонена неподписанная попытка', {
+          path: new URL(request.url).pathname,
+          reason: verified.reason,
+          ...verified.details,
+        })
+        return json({ error: 'подпись не подтверждена', reason: verified.reason }, 401)
       }
 
       const context: Ctx = {
         env,
-        user: verified.user,
-        startParam: verified.startParam,
+        user: verified.data.user,
+        startParam: verified.data.startParam,
         url: new URL(request.url),
         request,
       }
