@@ -125,7 +125,7 @@ export interface PartyState {
 
 export interface PartyStats {
   evenings: number
-  companions: { name: string; evenings: number }[]
+  companions: { tg_id: number; name: string; evenings: number }[]
   styles: { style: string; times: number }[]
   longest: { id: string; started_at: number; ended_at: number; duration: number } | null
   crowded: { id: string; started_at: number; members: number } | null

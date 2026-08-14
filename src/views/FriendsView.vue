@@ -18,8 +18,11 @@ import { formatLitres, formatDay, withPlural } from '../lib/format'
 import { tg } from '../lib/telegram'
 import PartiesSection from '../components/PartiesSection.vue'
 import Avatar from '../components/Avatar.vue'
+import { useFriendNames } from '../store/friends'
 
 const { entries, profile, saveProfile } = useEntries()
+// Свои имена друзей живут в одном месте: их читают и стол вечера, и статистика
+const { nameOf, rename } = useFriendNames()
 
 const isDev = import.meta.env.DEV
 const friends = ref<FriendTotals[]>([])
@@ -277,7 +280,7 @@ function freshness(friend: FriendTotals): string {
 
 /** Имя, под которым ты сам подписал человека, иначе — из его профиля */
 function displayName(friend: FriendTotals): string {
-  return profile.value.friendNames?.[String(friend.tg_id)] || friend.name
+  return nameOf(friend.tg_id, friend.name)
 }
 
 const renamingId = ref<number | null>(null)
@@ -290,11 +293,9 @@ function startRename(friend: FriendTotals) {
 
 async function saveName(friend: FriendTotals) {
   const next = draftName.value.trim()
-  const names = { ...(profile.value.friendNames ?? {}) }
 
-  // Пустое имя — возврат к тому, как человек назвался сам
-  if (next && next !== friend.name) names[String(friend.tg_id)] = next
-  else delete names[String(friend.tg_id)]
+  // Совпало с тем, как человек назвался сам — своё имя ни к чему
+  const names = rename(friend.tg_id, next === friend.name ? '' : next)
 
   profile.value = { ...profile.value, friendNames: names }
   await saveProfile()

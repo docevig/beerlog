@@ -17,6 +17,7 @@ import {
 } from '../lib/api'
 import { useParty } from '../store/party'
 import { useEntries } from '../store/entries'
+import { useFriendNames } from '../store/friends'
 import { styleTitle } from '../data/styles'
 import { styleColor, textOn } from '../lib/srm'
 import { formatLitres, formatDay, withPlural } from '../lib/format'
@@ -27,6 +28,7 @@ const props = defineProps<{ meId: number }>()
 
 const { active, parties, refresh, mirrorUpdate, mirrorRemove } = useParty()
 const { entries } = useEntries()
+const { nameOf } = useFriendNames()
 
 const state = ref<PartyState | null>(null)
 const stats = ref<PartyStats | null>(null)
@@ -69,8 +71,8 @@ function loadDemo() {
   stats.value = {
     evenings: 12,
     companions: [
-      { name: 'Паша', evenings: 8 },
-      { name: 'Марина', evenings: 5 },
+      { tg_id: 1, name: 'Паша', evenings: 8 },
+      { tg_id: 2, name: 'Марина', evenings: 5 },
     ],
     styles: [
       { style: 'ipa', times: 21 },
@@ -306,7 +308,7 @@ onMounted(load)
       <div v-if="stats.companions.length" class="line">
         чаще всего:
         <span v-for="(c, i) in stats.companions" :key="c.name">
-          {{ i > 0 ? ', ' : '' }}{{ c.name }} — {{ withPlural(c.evenings, 'вечер', 'вечера', 'вечеров') }}
+          {{ i > 0 ? ', ' : '' }}{{ nameOf(c.tg_id, c.name) }} — {{ withPlural(c.evenings, 'вечер', 'вечера', 'вечеров') }}
         </span>
       </div>
 

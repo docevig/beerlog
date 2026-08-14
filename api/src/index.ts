@@ -756,7 +756,8 @@ async function partyStats(ctx: Ctx): Promise<Response> {
     ).bind(ctx.user.id),
 
     ctx.env.DB.prepare(
-      `SELECT u.name, COUNT(*) AS evenings
+      // tg_id нужен клиенту: у себя человек мог подписать друга по-своему
+      `SELECT theirs.tg_id, u.name, COUNT(*) AS evenings
          FROM party_members mine
          JOIN party_members theirs ON theirs.party_id = mine.party_id AND theirs.tg_id != mine.tg_id
          JOIN users u ON u.tg_id = theirs.tg_id

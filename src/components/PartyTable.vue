@@ -4,11 +4,17 @@ import type { PartyState } from '../lib/api'
 import { styleTitle } from '../data/styles'
 import { styleColor, textOn } from '../lib/srm'
 import { formatLitres, formatTime, withPlural } from '../lib/format'
+import { useFriendNames } from '../store/friends'
 
 const props = defineProps<{ state: PartyState; meId: number }>()
 defineEmits<{ close: []; invite: [] }>()
 
-const nameById = computed(() => new Map(props.state.members.map((m) => [m.tg_id, m.name])))
+// Тот, кого ты переименовал в компании, и за столом должен быть тем же человеком
+const { nameOf } = useFriendNames()
+
+const nameById = computed(
+  () => new Map(props.state.members.map((m) => [m.tg_id, nameOf(m.tg_id, m.name)])),
+)
 
 /** Итог по каждому за столом: сколько взял и что именно */
 const perMember = computed(() =>
@@ -17,6 +23,7 @@ const perMember = computed(() =>
       const own = props.state.entries.filter((e) => e.tg_id === m.tg_id)
       return {
         ...m,
+        name: nameOf(m.tg_id, m.name),
         ml: own.reduce((sum, e) => sum + e.ml, 0),
         portions: own.length,
         styles: [...new Set(own.map((e) => e.style))],
