@@ -511,7 +511,7 @@ function tasteHint(friend: FriendTotals): string {
       </button>
 
       <button type="button" class="primary" :disabled="inviting" @click="invite">
-        {{ inviting ? 'готовим ссылку…' : 'позвать друга' }}
+        {{ inviting ? 'готовим ссылку…' : 'добавить друга' }}
       </button>
       <p class="fineprint">ссылка работает сутки — по ней зайдут все, кому её переслали</p>
 

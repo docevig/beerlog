@@ -292,33 +292,32 @@ onMounted(load)
       :me-id="props.meId"
       @invite="invite"
       @close="finish"
-    />
+    >
+      <!-- Зов через бота: приглашение доходит само, пересылать ссылку не нужно -->
+      <template v-if="(friends?.length ?? 0) > 0" #summon>
+        <button v-if="!summoning" type="button" class="summon-open" @click="summoning = true">
+          позвать друзей
+        </button>
 
-    <!-- Зов через бота: приглашение доходит само, пересылать ссылку не нужно -->
-    <template v-if="state && state.party.ended_at === null && (friends?.length ?? 0) > 0">
-      <button v-if="!summoning" type="button" class="summon-open" @click="summoning = true">
-        позвать друзей
-      </button>
+        <div v-else class="summon">
+          <label v-for="f in friends" :key="f.tg_id" class="pick">
+            <input
+              type="checkbox"
+              :checked="chosen.includes(f.tg_id)"
+              @change="toggleFriend(f.tg_id)"
+            />
+            <span>{{ f.name }}</span>
+          </label>
 
-      <div v-else class="summon">
-        <label v-for="f in friends" :key="f.tg_id" class="pick">
-          <input
-            type="checkbox"
-            :checked="chosen.includes(f.tg_id)"
-            @change="toggleFriend(f.tg_id)"
-          />
-          <span>{{ f.name }}</span>
-        </label>
-
-        <div class="summon-actions">
-          <button type="button" class="summon-go" :disabled="busy || chosen.length === 0" @click="summon">
-            позвать ({{ chosen.length }})
-          </button>
-          <button type="button" class="summon-cancel" @click="summoning = false">отмена</button>
+          <div class="summon-actions">
+            <button type="button" class="summon-go" :disabled="busy || chosen.length === 0" @click="summon">
+              позвать ({{ chosen.length }})
+            </button>
+            <button type="button" class="summon-cancel" @click="summoning = false">отмена</button>
+          </div>
         </div>
-      </div>
-    </template>
-
+      </template>
+    </PartyTable>
     <button v-else type="button" class="start" :disabled="busy" @click="begin">
       {{ busy ? 'собираем стол…' : 'начать вечеринку' }}
     </button>

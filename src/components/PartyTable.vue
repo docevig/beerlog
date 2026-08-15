@@ -85,6 +85,9 @@ const isOpen = computed(() => props.state.party.ended_at === null)
       </div>
     </div>
 
+    <!-- Зов живёт внутри карточки вечера: отдельно от неё непонятно, к чему он -->
+    <slot name="summon" />
+
     <button v-if="isOpen && isHost" type="button" class="ghost wide" @click="$emit('close')">
       завершить вечер
     </button>
