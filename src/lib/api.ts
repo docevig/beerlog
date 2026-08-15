@@ -384,3 +384,14 @@ export function ackInbox(ids: string[]): Promise<{ ok: boolean }> {
 export function saveLastChoice(ml: number, style: string): Promise<{ ok: boolean }> {
   return request('/me/last', { method: 'POST', body: JSON.stringify({ ml, style }) })
 }
+
+/**
+ * Готовит приглашение сообщением с кнопкой. Возвращает и код: он нужен
+ * для QR — тем, кто сидит рядом, пересылать ничего не надо.
+ */
+export function prepareInvite(
+  kind: 'friend' | 'party',
+  partyId?: string,
+): Promise<{ preparedMessageId: string; code: string }> {
+  return request('/share-invite', { method: 'POST', body: JSON.stringify({ kind, partyId }) })
+}

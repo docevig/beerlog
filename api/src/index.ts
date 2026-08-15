@@ -679,6 +679,54 @@ async function saveBotEntry(env: Env, userId: number, ml: number, style: string)
  * задаёт каждый сам, и запись уходит тому, кто выбрал, а не тому, кто первым
  * нажал. Работает и там, где бота нет в участниках: добавлять его не нужно.
  */
+/**
+ * Действующий код приглашения, а если такого нет — новый.
+ *
+ * Инлайн-подсказки Telegram запрашивает на каждый набранный символ, поэтому
+ * заводить свежий код на каждый запрос нельзя: таблица распухнет мусором.
+ * Пока прошлый жив, переиспользуем его — приглашения у нас многоразовые.
+ */
+async function reusableInvite(env: Env, userId: number, partyId?: string): Promise<string> {
+  const kind = partyId ? 'party' : 'friend'
+
+  const found = await env.DB.prepare(
+    `SELECT code FROM invites
+      WHERE author_id = ? AND kind = ? AND expires_at > ?
+        AND (party_id IS ? OR party_id = ?)
+      ORDER BY expires_at DESC LIMIT 1`,
+  )
+    .bind(userId, kind, Date.now(), partyId ?? null, partyId ?? null)
+    .first<{ code: string }>()
+
+  if (found) return found.code
+
+  const bytes = new Uint8Array(12)
+  crypto.getRandomValues(bytes)
+  const code = [...bytes].map((b) => b.toString(36).padStart(2, '0')).join('').slice(0, 20)
+
+  await env.DB.prepare(
+    `INSERT INTO invites (code, kind, author_id, party_id, expires_at) VALUES (?, ?, ?, ?, ?)`,
+  )
+    .bind(code, kind, userId, partyId ?? null, Date.now() + INVITE_TTL_MS)
+    .run()
+
+  return code
+}
+
+/** Идущий вечер этого человека, если он сейчас за столом */
+async function activePartyOf(env: Env, userId: number): Promise<string | undefined> {
+  const party = await env.DB.prepare(
+    `SELECT p.id FROM parties p
+       JOIN party_members m ON m.party_id = p.id AND m.tg_id = ?
+      WHERE p.ended_at IS NULL
+      ORDER BY p.started_at DESC LIMIT 1`,
+  )
+    .bind(userId)
+    .first<{ id: string }>()
+
+  return party?.id
+}
+
 async function answerInline(env: Env, queryId: string, userId: number, query: string): Promise<void> {
   const last = await env.DB.prepare(`SELECT last_ml, last_style FROM users WHERE tg_id = ?`)
     .bind(userId)
@@ -709,7 +757,7 @@ async function answerInline(env: Env, queryId: string, userId: number, query: st
       })
     : options
 
-  const results = (matching.length ? matching : options).slice(0, 10).map((o) => ({
+  const results: unknown[] = (matching.length ? matching : options).slice(0, 8).map((o) => ({
     type: 'article',
     // Идентификатор несёт сам выбор: при подтверждении придёт только он
     id: `${o.ml}:${o.style}`,
@@ -717,6 +765,49 @@ async function answerInline(env: Env, queryId: string, userId: number, query: st
     description: 'записать в дневник',
     input_message_content: { message_text: `🍺 ${BOT_STYLES[o.style] ?? o.style} ${formatMl(o.ml)}` },
   }))
+
+  /*
+    Приглашения — вторым делом, чтобы не мешать главному сценарию, но в том же
+    списке: звать удобнее оттуда же, откуда отмечаешься. Оба многоразовые,
+    поэтому сообщение можно кинуть в общий чат — примут все, кто нажмёт.
+  */
+  const wantsInvite = !needle || 'друг компания позвать добавить'.includes(needle)
+  const wantsParty = !needle || 'вечер вечеринка позвать'.includes(needle)
+
+  if (wantsInvite) {
+    const code = await reusableInvite(env, userId)
+
+    results.push({
+      type: 'article',
+      id: 'invite:friend',
+      title: 'добавить друга',
+      description: 'позвать в компанию — увидите, кто что пьёт',
+      input_message_content: { message_text: 'веду дневник пива — давай сравним, кто что берёт' },
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: 'войти в компанию', url: `https://t.me/beerlogs_bot/app?startapp=${code}` }],
+        ],
+      },
+    })
+  }
+
+  const partyId = wantsParty ? await activePartyOf(env, userId) : undefined
+  if (partyId) {
+    const code = await reusableInvite(env, userId, partyId)
+
+    results.push({
+      type: 'article',
+      id: 'invite:party',
+      title: 'позвать на вечеринку',
+      description: 'вечер идёт прямо сейчас',
+      input_message_content: { message_text: 'сегодня пьём вместе — заходи за стол' },
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: 'зайти за стол', url: `https://t.me/beerlogs_bot/app?startapp=${code}` }],
+        ],
+      },
+    })
+  }
 
   await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/answerInlineQuery`, {
     method: 'POST',
@@ -905,6 +996,67 @@ async function telegramUpdate(request: Request, env: Env): Promise<Response> {
   }
 
   return new Response('ok')
+}
+
+/**
+ * Готовит приглашение как сообщение с кнопкой.
+ *
+ * Текстовая ссылка требует от человека заметить её, нажать и дождаться
+ * запуска — на каждом шаге кто-то теряется. Подготовленное сообщение
+ * Telegram отправляет сам, а получателю остаётся одна кнопка.
+ */
+async function prepareInvite(ctx: Ctx): Promise<Response> {
+  const body = (await ctx.request.json()) as { kind?: string; partyId?: string }
+  const toParty = body.kind === 'party'
+
+  if (toParty && !body.partyId) return json({ error: 'нужен идентификатор вечера' }, 400)
+  if (toParty && !(await isMember(ctx, body.partyId!))) {
+    return json({ error: 'звать можно только на свой вечер' }, 403)
+  }
+
+  const code = await reusableInvite(ctx.env, ctx.user.id, toParty ? body.partyId : undefined)
+
+  const prepared = (await (
+    await fetch(`https://api.telegram.org/bot${ctx.env.BOT_TOKEN}/savePreparedInlineMessage`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        user_id: ctx.user.id,
+        result: {
+          type: 'article',
+          id: crypto.randomUUID(),
+          title: toParty ? 'позвать на вечеринку' : 'добавить друга',
+          input_message_content: {
+            message_text: toParty
+              ? 'сегодня пьём вместе — заходи за стол'
+              : 'веду дневник пива — давай сравним, кто что берёт',
+          },
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: toParty ? 'зайти за стол' : 'войти в компанию',
+                  url: `https://t.me/beerlogs_bot/app?startapp=${code}`,
+                },
+              ],
+            ],
+          },
+        },
+        // В том числе в группы: приглашение многоразовое, примут все, кто нажмёт
+        allow_user_chats: true,
+        allow_bot_chats: false,
+        allow_group_chats: true,
+        allow_channel_chats: false,
+      }),
+    })
+  ).json()) as { ok: boolean; description?: string; result?: { id: string } }
+
+  if (!prepared.ok || !prepared.result) {
+    log('приглашение не подготовилось', { description: prepared.description })
+    return json({ error: 'приглашение не подготовилось' }, 502)
+  }
+
+  return json({ preparedMessageId: prepared.result.id, code })
 }
 
 /** Карточка месяца рисуется в 1080 пикселей; больше сюда приехать не должно */
@@ -1505,6 +1657,7 @@ async function route(ctx: Ctx): Promise<Response> {
   if (method === 'POST' && pathname === '/me') return saveProfile(ctx)
   if (method === 'DELETE' && pathname === '/me') return deleteAccount(ctx)
   if (method === 'POST' && pathname === '/me/avatar') return uploadAvatar(ctx)
+  if (method === 'POST' && pathname === '/share-invite') return prepareInvite(ctx)
   if (method === 'POST' && pathname === '/share-card') return prepareCard(ctx)
   if (method === 'POST' && pathname === '/photos') return uploadPhoto(ctx)
   if (method === 'GET' && pathname === '/photos') return listPhotos(ctx)

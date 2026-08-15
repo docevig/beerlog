@@ -7,6 +7,7 @@ import {
   createInvite,
   inviteLink,
   pushTotals,
+  prepareInvite,
   removeFriend as removeFriendApi,
   type FriendTotals,
 } from '../lib/api'
@@ -15,9 +16,10 @@ import { findStyle, styleTitle } from '../data/styles'
 import { srmColor, styleColor, textOn } from '../lib/srm'
 import { dayKey } from '../lib/day'
 import { formatLitres, formatDay, withPlural } from '../lib/format'
-import { tg } from '../lib/telegram'
+import { tg, isVersionAtLeast, SHARE_MESSAGE_SINCE } from '../lib/telegram'
 import PartiesSection from '../components/PartiesSection.vue'
 import Avatar from '../components/Avatar.vue'
+import InviteQr from '../components/InviteQr.vue'
 import { useFriendNames } from '../store/friends'
 import { useParty } from '../store/party'
 
@@ -248,16 +250,35 @@ async function load() {
   }
 }
 
+/** Код показанного QR: рисуем его сами, ссылку никуда не отдаём */
+const qrLink = ref('')
+
+/**
+ * Приглашение сообщением с кнопкой. Раньше уходила текстовая ссылка, и
+ * на каждом шаге — заметить, нажать, дождаться запуска — кто-то терялся.
+ * Старый путь остаётся запасным: подготовленные сообщения умеет не всякий клиент.
+ */
 async function invite() {
   inviting.value = true
   failure.value = ''
 
   try {
+    const app = tg()
+
+    if (app?.shareMessage && isVersionAtLeast(SHARE_MESSAGE_SINCE)) {
+      const { preparedMessageId, code } = await prepareInvite('friend')
+      qrLink.value = inviteLink(code)
+      app.shareMessage(preparedMessageId)
+      return
+    }
+
     const { code } = await createInvite()
     const link = inviteLink(code)
-    const text = 'веду дневник пива, давай сравним — ссылка живёт сутки'
-    const app = tg()
+    qrLink.value = link
+
+    const text = 'веду дневник пива, давай сравним — по ссылке зайдут все, кому её переслали'
     const url = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`
+
     if (app) app.openTelegramLink(url)
     else window.open(url, '_blank')
   } catch (e) {
@@ -267,6 +288,27 @@ async function invite() {
   }
 }
 
+/** Код для тех, кто рядом: навёл камеру — и уже в компании */
+const qrOpen = ref(false)
+
+async function showQr() {
+  if (qrOpen.value) {
+    qrOpen.value = false
+    return
+  }
+
+  failure.value = ''
+
+  try {
+    if (!qrLink.value) {
+      const { code } = await createInvite()
+      qrLink.value = inviteLink(code)
+    }
+    qrOpen.value = true
+  } catch (e) {
+    failure.value = e instanceof Error ? e.message : String(e)
+  }
+}
 onMounted(load)
 
 function chipStyle(code: string) {
@@ -511,9 +553,17 @@ function tasteHint(friend: FriendTotals): string {
       </button>
 
       <button type="button" class="primary" :disabled="inviting" @click="invite">
-        {{ inviting ? 'готовим ссылку…' : 'добавить друга' }}
+        {{ inviting ? 'готовим приглашение…' : 'добавить друга' }}
       </button>
-      <p class="fineprint">ссылка работает сутки — по ней зайдут все, кому её переслали</p>
+
+      <button type="button" class="qr-toggle" @click="showQr">
+        {{ qrOpen ? 'скрыть код' : 'показать код — если друг рядом' }}
+      </button>
+
+      <InviteQr v-if="qrOpen && qrLink" :url="qrLink" />
+      <p v-if="qrOpen" class="fineprint">наведи камеру Telegram — и он в компании</p>
+
+      <p class="fineprint">приглашение живёт сутки — принять его могут все, кому оно попало</p>
 
       <PartiesSection
         :me-id="myId"
@@ -775,6 +825,16 @@ function tasteHint(friend: FriendTotals): string {
 }
 .primary:disabled {
   opacity: 0.6;
+}
+.qr-toggle {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-bright);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
 }
 .fineprint {
   margin: -12px 0 0;
