@@ -31,6 +31,11 @@ export interface TgWebApp {
    * Появился в Bot API 8.0, поэтому версию проверяем перед вызовом.
    */
   shareMessage?(preparedMessageId: string, cb?: (sent: boolean) => void): void
+  /**
+   * Открывает счёт по ссылке. Статус приходит колбэком: paid, cancelled,
+   * failed или pending. Появился в Bot API 6.1.
+   */
+  openInvoice?(url: string, cb?: (status: string) => void): void
   colorScheme: 'light' | 'dark'
   themeParams: Record<string, string>
   version: string

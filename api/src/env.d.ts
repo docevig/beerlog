@@ -7,4 +7,10 @@
  */
 interface Env {
   BOT_TOKEN: string
+  /**
+   * Пароль вебхука: Telegram присылает его заголовком с каждым обновлением.
+   * Без проверки адрес вебхука стал бы открытым входом для чужих «платежей».
+   * Задаётся командой `wrangler secret put WEBHOOK_SECRET`.
+   */
+  WEBHOOK_SECRET: string
 }

@@ -2,7 +2,14 @@
 import { ref, computed, onMounted } from 'vue'
 import Avatar from '../components/Avatar.vue'
 import { useEntries } from '../store/entries'
-import { apiAvailable, saveMyProfile, uploadAvatar, deleteAccount, forgetAvatar } from '../lib/api'
+import {
+  apiAvailable,
+  saveMyProfile,
+  uploadAvatar,
+  deleteAccount,
+  forgetAvatar,
+  createDonation,
+} from '../lib/api'
 import { compressImage } from '../lib/image'
 import { parseVolume, volumeHint } from '../lib/volume'
 import { VOLUME_PRESETS } from '../data/styles'
@@ -44,6 +51,9 @@ const photoInput = ref<HTMLInputElement | null>(null)
 const confirmingWipe = ref(false)
 
 const badge = computed(() => (icon.value ? `${icon.value}|${color.value}` : null))
+
+/** Старый клиент счёт не откроет, а вне Telegram платить попросту негде */
+const canTip = computed(() => Boolean(tg()?.openInvoice) && apiAvailable())
 
 const volumeHints = computed(() => volumes.value.map((v) => volumeHint(v)))
 
@@ -175,6 +185,37 @@ function resetVolumes() {
   void applyVolumes()
 }
 
+/**
+ * Номиналы поддержки. Звёзды — внутренняя валюта Telegram, и платёж целиком
+ * проходит внутри него: ни карты, ни имени, ни телефона никто не увидит.
+ */
+const TIPS = [25, 50, 100]
+
+const tipped = ref(false)
+
+async function tip(stars: number) {
+  const app = tg()
+  if (!app?.openInvoice || !apiAvailable()) return
+
+  busy.value = `tip-${stars}`
+  failure.value = ''
+
+  try {
+    const { link } = await createDonation(stars)
+
+    app.openInvoice(link, (status) => {
+      if (status === 'paid') {
+        tipped.value = true
+        flash('спасибо! 🍺')
+      }
+    })
+  } catch (e) {
+    failure.value = e instanceof Error ? e.message : 'счёт не открылся'
+  } finally {
+    busy.value = ''
+  }
+}
+
 async function wipe() {
   if (!confirmingWipe.value) {
     confirmingWipe.value = true
@@ -287,6 +328,26 @@ onMounted(() => {
           <template v-else>всё уехало в облако</template>
         </p>
         <button v-if="waiting > 0" type="button" class="link" @click="emit('flush')">дослать сейчас</button>
+      </div>
+
+      <div v-if="canTip" class="block">
+        <div class="eyebrow">создателю на пиво</div>
+        <p class="text">
+          <template v-if="tipped">уже угостил — спасибо, зачтётся 🍺</template>
+          <template v-else>если приложение пригодилось, можно скинуться звёздами</template>
+        </p>
+        <div class="tips">
+          <button
+            v-for="stars in TIPS"
+            :key="stars"
+            type="button"
+            class="tip"
+            :disabled="busy === `tip-${stars}`"
+            @click="tip(stars)"
+          >
+            {{ busy === `tip-${stars}` ? '…' : `★ ${stars}` }}
+          </button>
+        </div>
       </div>
 
       <div class="block">
@@ -407,6 +468,24 @@ onMounted(() => {
 }
 .color.on {
   border-color: var(--text);
+}
+.tips {
+  display: flex;
+  gap: 8px;
+}
+.tip {
+  padding: 9px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--accent-bright);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.tip:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 .volumes {
   display: grid;

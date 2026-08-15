@@ -511,6 +511,109 @@ async function getPhoto(ctx: Ctx, fileId: string): Promise<Response> {
   })
 }
 
+/** Сколько звёзд можно отправить за раз: рамки, чтобы не промахнуться нулём */
+const MIN_STARS = 1
+const MAX_STARS = 2500
+
+/**
+ * Счёт на поддержку звёздами.
+ *
+ * Для Stars платёжный провайдер не нужен: валюта внутренняя, `provider_token`
+ * не передаётся вовсе. Ссылку открывает сам клиент методом openInvoice.
+ */
+async function createDonation(ctx: Ctx): Promise<Response> {
+  const body = (await ctx.request.json()) as { stars?: number }
+  const stars = Math.round(body.stars ?? 0)
+
+  if (!Number.isFinite(stars) || stars < MIN_STARS || stars > MAX_STARS) {
+    return json({ error: 'непонятное число звёзд' }, 400)
+  }
+
+  const api = `https://api.telegram.org/bot${ctx.env.BOT_TOKEN}`
+
+  const created = (await (
+    await fetch(`${api}/createInvoiceLink`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 'создателю на пиво',
+        description: 'поддержка beerlog — на пиво тому, кто это написал',
+        // Пейлоад вернётся в успешном платеже: по нему видно, кто и сколько
+        payload: `beer:${ctx.user.id}:${stars}`,
+        currency: 'XTR',
+        prices: [{ label: 'на пиво', amount: stars }],
+      }),
+    })
+  ).json()) as { ok: boolean; description?: string; result?: string }
+
+  if (!created.ok || !created.result) {
+    log('счёт не создался', { description: created.description })
+    return json({ error: 'счёт не создался' }, 502)
+  }
+
+  return json({ link: created.result })
+}
+
+/**
+ * Обновления от Telegram. Нужны ровно для платежей: без ответа на
+ * pre_checkout_query оплата не проходит вовсе — Telegram ждёт подтверждения
+ * от бота и отменяет платёж по таймауту.
+ *
+ * Подпись initData здесь неприменима: запрос шлёт сервер Telegram, а не
+ * приложение, поэтому подлинность проверяется секретом из заголовка.
+ */
+async function telegramUpdate(request: Request, env: Env): Promise<Response> {
+  if (request.headers.get('x-telegram-bot-api-secret-token') !== env.WEBHOOK_SECRET) {
+    log('вебхук с чужим секретом')
+    return new Response('нет', { status: 403 })
+  }
+
+  const update = (await request.json()) as {
+    pre_checkout_query?: { id: string }
+    message?: {
+      chat: { id: number }
+      from?: { id: number }
+      successful_payment?: { total_amount: number; telegram_payment_charge_id: string }
+    }
+  }
+
+  const api = `https://api.telegram.org/bot${env.BOT_TOKEN}`
+
+  // Подтверждаем сразу: проверять нечего, товара с остатками у нас нет
+  if (update.pre_checkout_query) {
+    await fetch(`${api}/answerPreCheckoutQuery`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pre_checkout_query_id: update.pre_checkout_query.id, ok: true }),
+    })
+
+    return new Response('ok')
+  }
+
+  const payment = update.message?.successful_payment
+  if (payment && update.message) {
+    const chatId = update.message.chat.id
+
+    await env.DB.prepare(
+      `INSERT INTO donations (charge_id, tg_id, stars, created_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT (charge_id) DO NOTHING`,
+    )
+      .bind(payment.telegram_payment_charge_id, update.message.from?.id ?? chatId, payment.total_amount, Date.now())
+      .run()
+
+    await fetch(`${api}/sendMessage`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: 'спасибо! пиво засчитано 🍺',
+      }),
+    })
+  }
+
+  return new Response('ok')
+}
+
 /** Карточка месяца рисуется в 1080 пикселей; больше сюда приехать не должно */
 const MAX_CARD_BYTES = 2_000_000
 
@@ -1026,6 +1129,7 @@ async function route(ctx: Ctx): Promise<Response> {
   const avatarPath = pathname.match(/^\/avatar\/(\d{1,20})$/)
   if (method === 'GET' && avatarPath) return avatar(ctx, Number(avatarPath[1]))
 
+  if (method === 'POST' && pathname === '/donate') return createDonation(ctx)
   if (method === 'POST' && pathname === '/me') return saveProfile(ctx)
   if (method === 'DELETE' && pathname === '/me') return deleteAccount(ctx)
   if (method === 'POST' && pathname === '/me/avatar') return uploadAvatar(ctx)
@@ -1065,6 +1169,15 @@ async function route(ctx: Ctx): Promise<Response> {
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (request.method === 'OPTIONS') return preflight()
+
+    /*
+      Обновления от Telegram приходят без initData: их шлёт сервер, а не
+      мини-приложение. Поэтому маршрут стоит до проверки подписи, а его
+      подлинность подтверждает секрет в заголовке.
+    */
+    if (request.method === 'POST' && new URL(request.url).pathname === '/tg/update') {
+      return telegramUpdate(request, env)
+    }
 
     try {
       const initData = request.headers.get('x-init-data') ?? ''

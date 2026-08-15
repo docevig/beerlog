@@ -353,3 +353,8 @@ export async function uploadAvatar(blob: Blob): Promise<{ ok: boolean }> {
 export function forgetAvatar(tgId: number): void {
   avatarCache.delete(tgId)
 }
+
+/** Счёт на поддержку звёздами; ссылку открывает сам Telegram */
+export function createDonation(stars: number): Promise<{ link: string }> {
+  return request('/donate', { method: 'POST', body: JSON.stringify({ stars }) })
+}
