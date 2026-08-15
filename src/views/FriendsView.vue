@@ -19,10 +19,14 @@ import { tg } from '../lib/telegram'
 import PartiesSection from '../components/PartiesSection.vue'
 import Avatar from '../components/Avatar.vue'
 import { useFriendNames } from '../store/friends'
+import { useParty } from '../store/party'
 
 const { entries, profile, saveProfile } = useEntries()
 // Свои имена друзей живут в одном месте: их читают и стол вечера, и статистика
 const { nameOf, rename } = useFriendNames()
+// Пока вечер идёт, стол важнее списка друзей и показывается первым
+
+const { active: activeParty } = useParty()
 
 const isDev = import.meta.env.DEV
 const friends = ref<FriendTotals[]>([])
@@ -128,7 +132,31 @@ function compareTastes(friend: FriendTotals): TasteCompare {
  * Порядок — по имени, не по литрам. Список, отсортированный по объёму,
  * читается как турнирная таблица, даже если нигде не написано «место».
  */
-const sortedFriends = computed(() => [...friends.value].sort((a, b) => a.name.localeCompare(b.name, 'ru')))
+const sortedFriends = computed(() =>
+  [...friends.value].sort((a, b) => displayName(a).localeCompare(displayName(b), 'ru')),
+)
+
+/** Поиск нужен не всем: до полутора десятков имён он только занимает место */
+const SEARCH_FROM = 15
+
+/** Сколько показываем, пока список не развернули */
+const PREVIEW = 10
+
+const query = ref('')
+const expanded = ref(false)
+
+const foundFriends = computed(() => {
+  const needle = query.value.trim().toLowerCase()
+  if (!needle) return sortedFriends.value
+  return sortedFriends.value.filter((f) => displayName(f).toLowerCase().includes(needle))
+})
+
+/** При поиске показываем всё найденное: прятать результаты поиска бессмысленно */
+const shownFriends = computed(() =>
+  expanded.value || query.value.trim() ? foundFriends.value : foundFriends.value.slice(0, PREVIEW),
+)
+
+const hiddenCount = computed(() => foundFriends.value.length - shownFriends.value.length)
 
 /**
  * Вне Telegram сервер недоступен по определению — подписи нет.
@@ -350,6 +378,15 @@ function tasteHint(friend: FriendTotals): string {
           </div>
         </div>
 
+        <!-- Поиск появляется только когда список стал длинным -->
+        <input
+          v-if="sortedFriends.length > SEARCH_FROM"
+          v-model="query"
+          class="search"
+          type="search"
+          placeholder="найти по имени"
+        />
+
         <!-- Свои цифры стоят в том же списке: это точка отсчёта для сравнения,
              а не второй экран итогов -->
         <div class="friend self">
@@ -371,7 +408,7 @@ function tasteHint(friend: FriendTotals): string {
             </span>
           </div>
         </div>
-        <div v-for="f in sortedFriends" :key="f.tg_id" class="friend">
+        <div v-for="f in shownFriends" :key="f.tg_id" class="friend">
           <button type="button" class="friend-head" @click="toggle(f.tg_id)">
             <!-- Обводка аватара — средний цвет месяца: вкус виден до раскрытия -->
             <Avatar
@@ -456,17 +493,53 @@ function tasteHint(friend: FriendTotals): string {
         <p class="empty-body">позови друга — увидите, кто что открывает и чем отличаются вкусы</p>
       </div>
 
+      <button v-if="hiddenCount > 0" type="button" class="more" @click="expanded = true">
+        показать всех ({{ foundFriends.length }})
+      </button>
+      <button
+        v-else-if="expanded && foundFriends.length > PREVIEW"
+        type="button"
+        class="more"
+        @click="expanded = false"
+      >
+        свернуть список
+      </button>
+
       <button type="button" class="primary" :disabled="inviting" @click="invite">
         {{ inviting ? 'готовим ссылку…' : 'позвать друга' }}
       </button>
       <p class="fineprint">ссылка работает сутки — по ней зайдут все, кому её переслали</p>
 
-      <PartiesSection :me-id="myId" />
+      <PartiesSection :me-id="myId" :class="{ first: activeParty }" />
     </template>
   </section>
 </template>
 
 <style scoped>
+/* Пока вечер идёт, стол переезжает наверх — перестраивать дерево ради этого незачем */
+.first {
+  order: -1;
+}
+.search {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.more {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-bright);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
 .view {
   display: flex;
   flex-direction: column;

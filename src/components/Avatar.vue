@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { loadAvatar } from '../lib/api'
 
 const props = defineProps<{
@@ -47,9 +47,14 @@ const palette = computed(() => PLACEHOLDER_COLORS[Math.abs(props.tgId) % PLACEHO
  * заглушку с инициалами: она успешно загружается, поэтому подмену нельзя
  * заметить по ошибке картинки — только не использовать её вовсе.
  */
+const root = ref<HTMLElement | null>(null)
+
+/** Показалась ли аватарка на экране — до этого за фото не ходим */
+const visible = ref(false)
+
 async function fetchPhoto() {
-  // Значок рисуется на месте, а за фото ходим только если оно есть
-  if (!props.tgId || badge.value || props.hasPhoto === false) {
+  // Значок рисуется на месте, а за фото ходим только если оно есть и его видно
+  if (!props.tgId || badge.value || props.hasPhoto === false || !visible.value) {
     src.value = null
     return
   }
@@ -61,7 +66,37 @@ function onImageError() {
   src.value = null
 }
 
-onMounted(fetchPhoto)
+/*
+  Фото каждого друга — отдельный запрос к серверу: картинка идёт через Worker,
+  потому что токен бота наружу отдавать нельзя. При длинном списке это десятки
+  запросов разом, поэтому ждём, пока строка появится на экране.
+*/
+let watcher: IntersectionObserver | undefined
+
+onMounted(() => {
+  if (!root.value || typeof IntersectionObserver === 'undefined') {
+    visible.value = true
+    void fetchPhoto()
+    return
+  }
+
+  watcher = new IntersectionObserver(
+    (entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return
+
+      visible.value = true
+      watcher?.disconnect()
+      void fetchPhoto()
+    },
+    // Небольшой запас: аватарка успевает загрузиться до того, как её пролистают
+    { rootMargin: '120px' },
+  )
+
+  watcher.observe(root.value)
+})
+
+onBeforeUnmount(() => watcher?.disconnect())
+
 watch(() => [props.tgId, props.avatar, props.hasPhoto], fetchPhoto)
 
 const initial = (name: string) => name.trim().charAt(0).toUpperCase() || '?'
@@ -69,6 +104,7 @@ const initial = (name: string) => name.trim().charAt(0).toUpperCase() || '?'
 
 <template>
   <span
+    ref="root"
     class="avatar"
     :style="{ borderColor: ring, background: badge ? badge.color : src ? undefined : palette.bg }"
   >
