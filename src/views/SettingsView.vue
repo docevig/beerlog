@@ -229,9 +229,9 @@ async function wipe() {
 
   try {
     if (apiAvailable()) await deleteAccount()
-    flash('данные на сервере стёрты')
+    flash('данные на сервере удалены')
   } catch (e) {
-    failure.value = e instanceof Error ? e.message : 'не удалось стереть'
+    failure.value = e instanceof Error ? e.message : 'не удалось удалить'
   } finally {
     busy.value = ''
   }
@@ -360,11 +360,17 @@ onMounted(() => {
         <p class="text">{{ storageLine }}</p>
         <p class="tech">{{ diagnostics }}</p>
 
-        <button type="button" class="danger" :disabled="busy === 'wipe'" @click="wipe">
-          {{ confirmingWipe ? 'точно? нажми ещё раз' : 'стереть мои данные' }}
+        <button
+          type="button"
+          class="danger"
+          :class="{ armed: confirmingWipe }"
+          :disabled="busy === 'wipe'"
+          @click="wipe"
+        >
+          {{ confirmingWipe ? 'точно? нажми ещё раз' : 'удалить мои данные' }}
         </button>
         <p class="hint">
-          сотрёт витрину, вечера, друзей и снимки. Дневник останется в Telegram — его чистит
+          удалит витрину, вечера, друзей и снимки. Дневник останется в Telegram — его чистит
           только сам Telegram
         </p>
       </div>
@@ -532,14 +538,19 @@ onMounted(() => {
 }
 .danger {
   align-self: flex-start;
-  padding: 9px 14px;
-  border: 1px solid #7B1A00;
+  padding: 10px 16px;
+  border: 0;
   border-radius: var(--radius);
-  background: none;
-  color: #E58500;
-  font: inherit;
+  background: #B02B1C;
+  color: #FFF0EB;
+  font-family: var(--font-display);
+  font-weight: 600;
   font-size: 13px;
   cursor: pointer;
+}
+/* На подтверждении красный становится ярче: последний шаг виден отдельно */
+.danger.armed {
+  background: #D8391F;
 }
 .text {
   margin: 0;
