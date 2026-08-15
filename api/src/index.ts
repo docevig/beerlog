@@ -673,6 +673,64 @@ async function saveBotEntry(env: Env, userId: number, ml: number, style: string)
   }
 }
 
+/**
+ * Инлайн-режим: человек пишет «@beerlogs_bot» в любом чате и выбирает свой
+ * вариант. Для компании это честнее кнопок под общим сообщением — вопрос
+ * задаёт каждый сам, и запись уходит тому, кто выбрал, а не тому, кто первым
+ * нажал. Работает и там, где бота нет в участниках: добавлять его не нужно.
+ */
+async function answerInline(env: Env, queryId: string, userId: number, query: string): Promise<void> {
+  const last = await env.DB.prepare(`SELECT last_ml, last_style FROM users WHERE tg_id = ?`)
+    .bind(userId)
+    .first<{ last_ml: number | null; last_style: string | null }>()
+
+  const lastMl = last?.last_ml ?? 500
+  const lastStyle = last?.last_style ?? 'lager'
+
+  const options: { ml: number; style: string }[] = []
+
+  // Повтор последнего идёт первым: в компании обычно берут то же самое
+  if (last?.last_ml && last.last_style) options.push({ ml: lastMl, style: lastStyle })
+
+  for (const style of ['lager', 'ipa', 'wheat', 'stout']) {
+    if (!options.some((o) => o.ml === lastMl && o.style === style)) options.push({ ml: lastMl, style })
+  }
+
+  for (const ml of BOT_VOLUMES) {
+    if (!options.some((o) => o.ml === ml && o.style === lastStyle)) options.push({ ml, style: lastStyle })
+  }
+
+  // Набранное после имени бота сужает список: «@beerlogs_bot стаут»
+  const needle = query.trim().toLowerCase()
+  const matching = needle
+    ? options.filter((o) => {
+        const title = (BOT_STYLES[o.style] ?? o.style).toLowerCase()
+        return title.includes(needle) || String(o.ml).startsWith(needle)
+      })
+    : options
+
+  const results = (matching.length ? matching : options).slice(0, 10).map((o) => ({
+    type: 'article',
+    // Идентификатор несёт сам выбор: при подтверждении придёт только он
+    id: `${o.ml}:${o.style}`,
+    title: `${BOT_STYLES[o.style] ?? o.style} ${formatMl(o.ml)}`,
+    description: 'записать в дневник',
+    input_message_content: { message_text: `🍺 ${BOT_STYLES[o.style] ?? o.style} ${formatMl(o.ml)}` },
+  }))
+
+  await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/answerInlineQuery`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      inline_query_id: queryId,
+      results,
+      // Ответ у каждого свой, общий кэш тут недопустим
+      is_personal: true,
+      cache_time: 0,
+    }),
+  })
+}
+
 /** Сколько звёзд можно отправить за раз: рамки, чтобы не промахнуться нулём */
 const MIN_STARS = 1
 const MAX_STARS = 2500
@@ -732,6 +790,8 @@ async function telegramUpdate(request: Request, env: Env): Promise<Response> {
 
   const update = (await request.json()) as {
     pre_checkout_query?: { id: string }
+    inline_query?: { id: string; query: string; from: { id: number } }
+    chosen_inline_result?: { result_id: string; from: { id: number } }
     callback_query?: {
       id: string
       data?: string
@@ -755,6 +815,25 @@ async function telegramUpdate(request: Request, env: Env): Promise<Response> {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ pre_checkout_query_id: update.pre_checkout_query.id, ok: true }),
     })
+
+    return new Response('ok')
+  }
+
+  // Подсказки инлайн-режима: их спрашивают на каждый набранный символ
+  if (update.inline_query) {
+    await answerInline(env, update.inline_query.id, update.inline_query.from.id, update.inline_query.query)
+    return new Response('ok')
+  }
+
+  /*
+    Выбранный вариант — и есть отметка. Это обновление приходит, только если
+    у бота включён сбор статистики инлайн-режима (BotFather, setinlinefeedback):
+    без него человек увидит сообщение в чате, а в дневник ничего не попадёт.
+  */
+  const picked = update.chosen_inline_result
+  if (picked) {
+    const choice = picked.result_id.match(/^(\d{2,5}):([a-z_]{1,24})$/)
+    if (choice) await saveBotEntry(env, picked.from.id, Number(choice[1]), choice[2])
 
     return new Response('ok')
   }
