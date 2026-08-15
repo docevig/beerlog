@@ -11,6 +11,7 @@ import {
   partyInvite,
   fetchPartyStats,
   inviteLink,
+  summonFriends,
   type PartyState,
   type PartyStats,
   type PartySummary,
@@ -24,7 +25,7 @@ import { formatLitres, formatDay, withPlural } from '../lib/format'
 import { dayKey } from '../lib/day'
 import { tg } from '../lib/telegram'
 
-const props = defineProps<{ meId: number }>()
+const props = defineProps<{ meId: number; friends?: { tg_id: number; name: string }[] }>()
 
 const { active, parties, refresh, reconcile } = useParty()
 const { entries } = useEntries()
@@ -122,6 +123,38 @@ async function begin() {
     const { id } = await startParty()
     await refresh()
     state.value = await fetchParty(id)
+  } catch (e) {
+    failure.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    busy.value = false
+  }
+}
+
+/**
+ * Кого зовём. Никто не отмечен заранее: рассылка всей компании без спроса
+ * читается как спам, даже если каждый из них сейчас за соседним столом.
+ */
+const summoning = ref(false)
+const chosen = ref<number[]>([])
+
+function toggleFriend(id: number) {
+  chosen.value = chosen.value.includes(id)
+    ? chosen.value.filter((x) => x !== id)
+    : [...chosen.value, id]
+}
+
+async function summon() {
+  if (!state.value || chosen.value.length === 0) return
+
+  busy.value = true
+  failure.value = ''
+
+  try {
+    const { sent } = await summonFriends(state.value.party.id, chosen.value)
+    chosen.value = []
+    summoning.value = false
+    // Кого-то бот мог не дозваться: заблокировал — и ладно, остальные получили
+    failure.value = sent > 0 ? '' : 'никому не дошло — возможно, бот заблокирован'
   } catch (e) {
     failure.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -261,6 +294,31 @@ onMounted(load)
       @close="finish"
     />
 
+    <!-- Зов через бота: приглашение доходит само, пересылать ссылку не нужно -->
+    <template v-if="state && state.party.ended_at === null && (friends?.length ?? 0) > 0">
+      <button v-if="!summoning" type="button" class="link" @click="summoning = true">
+        позвать друзей
+      </button>
+
+      <div v-else class="summon">
+        <label v-for="f in friends" :key="f.tg_id" class="pick">
+          <input
+            type="checkbox"
+            :checked="chosen.includes(f.tg_id)"
+            @change="toggleFriend(f.tg_id)"
+          />
+          <span>{{ f.name }}</span>
+        </label>
+
+        <div class="summon-actions">
+          <button type="button" class="ghost" :disabled="busy || chosen.length === 0" @click="summon">
+            позвать ({{ chosen.length }})
+          </button>
+          <button type="button" class="link" @click="summoning = false">отмена</button>
+        </div>
+      </div>
+    </template>
+
     <button v-else type="button" class="start" :disabled="busy" @click="begin">
       {{ busy ? 'собираем стол…' : 'начать вечеринку' }}
     </button>
@@ -328,6 +386,27 @@ onMounted(load)
 </template>
 
 <style scoped>
+.summon {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.pick {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.summon-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+}
 .parties {
   display: flex;
   flex-direction: column;

@@ -87,6 +87,53 @@ async function saveProfile(ctx: Ctx): Promise<Response> {
   return json({ ok: true })
 }
 
+/**
+ * Запоминает последний выбор — им бот предлагает «ещё такое же».
+ * Дневник ему недоступен, так что иначе он про твои привычки не узнает.
+ */
+async function saveLastChoice(ctx: Ctx): Promise<Response> {
+  const body = (await ctx.request.json()) as { ml?: number; style?: string }
+  const ml = Math.round(body.ml ?? 0)
+
+  if (!ml || ml < 10 || ml > 10_000) return json({ error: 'непонятный объём' }, 400)
+  if (!body.style || !/^[a-z_]{1,24}$/.test(body.style)) return json({ error: 'непонятный стиль' }, 400)
+
+  await ctx.env.DB.prepare(`UPDATE users SET last_ml = ?, last_style = ? WHERE tg_id = ?`)
+    .bind(ml, body.style, ctx.user.id)
+    .run()
+
+  return json({ ok: true })
+}
+
+/** Отметки, сделанные в переписке и ещё не попавшие в дневник */
+async function listInbox(ctx: Ctx): Promise<Response> {
+  const { results } = await ctx.env.DB.prepare(
+    `SELECT id, ts, ml, style FROM inbox WHERE tg_id = ? ORDER BY ts LIMIT 200`,
+  )
+    .bind(ctx.user.id)
+    .all()
+
+  return json({ entries: results })
+}
+
+/**
+ * Подтверждение приёма: удаляем только то, что клиент назвал поимённо.
+ * Чистить всё подряд нельзя — между выборкой и подтверждением человек мог
+ * отметить ещё кружку, и она пропала бы, не доехав до дневника.
+ */
+async function ackInbox(ctx: Ctx): Promise<Response> {
+  const body = (await ctx.request.json()) as { ids?: string[] }
+  const ids = Array.isArray(body.ids) ? body.ids.filter((id) => typeof id === 'string').slice(0, 200) : []
+  if (ids.length === 0) return json({ ok: true })
+
+  const marks = ids.map(() => '?').join(',')
+  await ctx.env.DB.prepare(`DELETE FROM inbox WHERE tg_id = ? AND id IN (${marks})`)
+    .bind(ctx.user.id, ...ids)
+    .run()
+
+  return json({ ok: true })
+}
+
 /** Аватарка своим фото. Хранит её Telegram — тем же приёмом, что и этикетки */
 async function uploadAvatar(ctx: Ctx): Promise<Response> {
   const type = ctx.request.headers.get('content-type') ?? ''
@@ -511,6 +558,121 @@ async function getPhoto(ctx: Ctx, fileId: string): Promise<Response> {
   })
 }
 
+/**
+ * Мини-справочник стилей для кнопок бота. Полный лежит на клиенте и сюда
+ * не нужен: в переписке предлагаются только самые ходовые, всё остальное
+ * человек выберет в приложении.
+ */
+const BOT_STYLES: Record<string, string> = {
+  lager: 'Лагер',
+  ipa: 'IPA',
+  wheat: 'Пшеничное',
+  stout: 'Стаут',
+  pilsner: 'Пилснер',
+  sour: 'Сауэр',
+  neipa: 'NEIPA',
+  porter: 'Портер',
+}
+
+/** Объёмы в кнопках: те же три, что зашиты в приложении по умолчанию */
+const BOT_VOLUMES = [330, 500, 1000]
+
+function formatMl(ml: number): string {
+  return ml >= 1000 ? `${(ml / 1000).toFixed(1).replace('.0', '').replace('.', ',')} л` : `${ml} мл`
+}
+
+/** Отправляет сообщение боту; ошибки только логируем — переписка не критична */
+async function botSend(env: Env, chatId: number, text: string, keyboard?: unknown): Promise<void> {
+  await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendMessage`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text, reply_markup: keyboard }),
+  })
+}
+
+/**
+ * Первый шаг быстрой отметки: выбор объёма.
+ *
+ * Смысл всей затеи — записать кружку, не открывая приложение: в шумном месте
+ * это разница между «отмечу потом» и одним тапом.
+ */
+async function offerVolumes(env: Env, chatId: number, userId: number): Promise<void> {
+  const last = await env.DB.prepare(`SELECT last_ml, last_style FROM users WHERE tg_id = ?`)
+    .bind(userId)
+    .first<{ last_ml: number | null; last_style: string | null }>()
+
+  const row = BOT_VOLUMES.map((ml) => ({ text: formatMl(ml), callback_data: `v:${ml}` }))
+  const keyboard: { text: string; callback_data: string }[][] = [row]
+
+  // Повтор последнего — самая частая нужда: в баре берут то же самое
+  if (last?.last_ml && last.last_style) {
+    keyboard.push([
+      {
+        text: `ещё такое же: ${BOT_STYLES[last.last_style] ?? last.last_style} ${formatMl(last.last_ml)}`,
+        callback_data: `s:${last.last_ml}:${last.last_style}`,
+      },
+    ])
+  }
+
+  await botSend(env, chatId, 'сколько?', { inline_keyboard: keyboard })
+}
+
+/** Второй шаг: стиль. Последний выбор идёт первым — обычно берут его же */
+async function offerStyles(env: Env, chatId: number, userId: number, ml: number): Promise<void> {
+  const last = await env.DB.prepare(`SELECT last_style FROM users WHERE tg_id = ?`)
+    .bind(userId)
+    .first<{ last_style: string | null }>()
+
+  const codes = [...new Set([last?.last_style, 'lager', 'ipa', 'wheat', 'stout'].filter(Boolean))]
+    .slice(0, 4) as string[]
+
+  const buttons = codes.map((code) => ({
+    text: BOT_STYLES[code] ?? code,
+    callback_data: `s:${ml}:${code}`,
+  }))
+
+  await botSend(env, chatId, `${formatMl(ml)} — что пьём?`, {
+    inline_keyboard: [buttons.slice(0, 2), buttons.slice(2)],
+  })
+}
+
+/**
+ * Записывает отметку, сделанную в переписке.
+ *
+ * Дневник лежит в CloudStorage и боту недоступен, поэтому кружка ждёт
+ * во «входящих», пока приложение не откроют. На общий стол она попадает
+ * сразу — иначе компания не увидела бы её весь вечер.
+ */
+async function saveBotEntry(env: Env, userId: number, ml: number, style: string): Promise<void> {
+  const id = crypto.randomUUID()
+  const now = Date.now()
+
+  await env.DB.batch([
+    env.DB.prepare(`INSERT INTO inbox (id, tg_id, ts, ml, style, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+      .bind(id, userId, now, ml, style, now),
+    env.DB.prepare(`UPDATE users SET last_ml = ?, last_style = ? WHERE tg_id = ?`)
+      .bind(ml, style, userId),
+  ])
+
+  const party = await env.DB.prepare(
+    `SELECT p.id FROM parties p
+       JOIN party_members m ON m.party_id = p.id AND m.tg_id = ?
+      WHERE p.ended_at IS NULL
+      ORDER BY p.started_at DESC LIMIT 1`,
+  )
+    .bind(userId)
+    .first<{ id: string }>()
+
+  if (party) {
+    await env.DB.prepare(
+      `INSERT INTO party_entries (id, party_id, tg_id, ts, ml, style, name) VALUES (?, ?, ?, ?, ?, ?, NULL)
+       ON CONFLICT (id) DO NOTHING`,
+    )
+      .bind(id, party.id, userId, now, ml, style)
+      .run()
+  }
+}
+
 /** Сколько звёзд можно отправить за раз: рамки, чтобы не промахнуться нулём */
 const MIN_STARS = 1
 const MAX_STARS = 2500
@@ -570,9 +732,16 @@ async function telegramUpdate(request: Request, env: Env): Promise<Response> {
 
   const update = (await request.json()) as {
     pre_checkout_query?: { id: string }
+    callback_query?: {
+      id: string
+      data?: string
+      from: { id: number }
+      message?: { chat: { id: number } }
+    }
     message?: {
       chat: { id: number }
       from?: { id: number }
+      text?: string
       successful_payment?: { total_amount: number; telegram_payment_charge_id: string }
     }
   }
@@ -587,6 +756,51 @@ async function telegramUpdate(request: Request, env: Env): Promise<Response> {
       body: JSON.stringify({ pre_checkout_query_id: update.pre_checkout_query.id, ok: true }),
     })
 
+    return new Response('ok')
+  }
+
+  /*
+    Нажатие кнопки. Отвечаем на callback обязательно и первым делом: пока
+    ответа нет, в клиенте крутится часик, даже если запись уже прошла.
+  */
+  const press = update.callback_query
+  if (press) {
+    const chatId = press.message?.chat.id ?? press.from.id
+    const data = press.data ?? ''
+
+    const volume = data.match(/^v:(\d{2,5})$/)
+    const choice = data.match(/^s:(\d{2,5}):([a-z_]{1,24})$/)
+
+    await fetch(`${api}/answerCallbackQuery`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ callback_query_id: press.id }),
+    })
+
+    if (volume) {
+      await offerStyles(env, chatId, press.from.id, Number(volume[1]))
+    } else if (choice) {
+      const ml = Number(choice[1])
+      const style = choice[2]
+
+      await saveBotEntry(env, press.from.id, ml, style)
+      await botSend(env, chatId, `записано: ${BOT_STYLES[style] ?? style} ${formatMl(ml)} 🍺`)
+    }
+
+    return new Response('ok')
+  }
+
+  // Любое слово в переписке трактуем как «хочу отметить»: другого дела у бота нет
+  const text = update.message?.text
+  if (text && update.message) {
+    const chatId = update.message.chat.id
+    const userId = update.message.from?.id ?? chatId
+
+    if (text.startsWith('/start')) {
+      await botSend(env, chatId, 'открой приложение кнопкой меню — или отметь кружку прямо здесь')
+    }
+
+    await offerVolumes(env, chatId, userId)
     return new Response('ok')
   }
 
@@ -740,6 +954,82 @@ async function removeFriend(ctx: Ctx, friendId: number): Promise<Response> {
     .run()
 
   return json({ ok: true })
+}
+
+/** Общий код приглашения: непредсказуемый, по нему открывается доступ к вечеру */
+function newInviteCode(): string {
+  const bytes = new Uint8Array(12)
+  crypto.getRandomValues(bytes)
+  return [...bytes].map((b) => b.toString(36).padStart(2, '0')).join('').slice(0, 20)
+}
+
+/**
+ * Зовёт друзей на идущий вечер сообщением от бота.
+ *
+ * Раньше приглашение нужно было переслать руками, и до тех, кто рядом,
+ * оно часто не доходило. Право писать у бота уже есть: его дал каждый,
+ * кто хоть раз открыл приложение.
+ */
+async function summonFriends(ctx: Ctx, partyId: string): Promise<Response> {
+  if (!(await isMember(ctx, partyId))) return json({ error: 'звать можно только на свой вечер' }, 403)
+
+  const party = await ctx.env.DB.prepare(`SELECT ended_at FROM parties WHERE id = ?`)
+    .bind(partyId)
+    .first<{ ended_at: number | null }>()
+
+  if (!party) return json({ error: 'вечеринка не найдена' }, 404)
+  if (party.ended_at !== null) return json({ error: 'вечер уже закрыт' }, 409)
+
+  const body = (await ctx.request.json()) as { ids?: number[] }
+  const wanted = Array.isArray(body.ids) ? body.ids.filter((id) => Number.isFinite(id)).slice(0, 50) : []
+  if (wanted.length === 0) return json({ error: 'некого звать' }, 400)
+
+  // Писать можно только своим: рассылка чужим людям — это спам от нашего имени
+  const { results } = await ctx.env.DB.prepare(
+    `SELECT CASE WHEN low_id = ?1 THEN high_id ELSE low_id END AS friend_id
+       FROM friendships WHERE low_id = ?1 OR high_id = ?1`,
+  )
+    .bind(ctx.user.id)
+    .all<{ friend_id: number }>()
+
+  const friends = new Set(results.map((r) => r.friend_id))
+  const targets = wanted.filter((id) => friends.has(id))
+  if (targets.length === 0) return json({ error: 'эти люди не в твоей компании' }, 403)
+
+  const me = await ctx.env.DB.prepare(`SELECT COALESCE(custom_name, name) AS name FROM users WHERE tg_id = ?`)
+    .bind(ctx.user.id)
+    .first<{ name: string }>()
+
+  // Код один на всю рассылку: это приглашение на вечер, а не персональный пропуск
+  const code = newInviteCode()
+  await ctx.env.DB.prepare(
+    `INSERT INTO invites (code, kind, author_id, party_id, expires_at) VALUES (?, 'party', ?, ?, ?)`,
+  )
+    .bind(code, ctx.user.id, partyId, Date.now() + INVITE_TTL_MS)
+    .run()
+
+  const api = `https://api.telegram.org/bot${ctx.env.BOT_TOKEN}`
+  const text = `${me?.name ?? 'кто-то'} открыл вечер — заходи за стол`
+  const keyboard = {
+    inline_keyboard: [[{ text: 'зайти за стол', url: `https://t.me/beerlogs_bot/app?startapp=${code}` }]],
+  }
+
+  let sent = 0
+  for (const id of targets) {
+    const answer = (await (
+      await fetch(`${api}/sendMessage`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: id, text, reply_markup: keyboard }),
+      })
+    ).json()) as { ok: boolean; description?: string }
+
+    // Человек мог заблокировать бота — это не повод рушить всю рассылку
+    if (answer.ok) sent += 1
+    else log('позвать не вышло', { target: id, description: answer.description })
+  }
+
+  return json({ sent })
 }
 
 async function createInvite(ctx: Ctx): Promise<Response> {
@@ -1129,6 +1419,9 @@ async function route(ctx: Ctx): Promise<Response> {
   const avatarPath = pathname.match(/^\/avatar\/(\d{1,20})$/)
   if (method === 'GET' && avatarPath) return avatar(ctx, Number(avatarPath[1]))
 
+  if (method === 'POST' && pathname === '/me/last') return saveLastChoice(ctx)
+  if (method === 'GET' && pathname === '/inbox') return listInbox(ctx)
+  if (method === 'POST' && pathname === '/inbox/ack') return ackInbox(ctx)
   if (method === 'POST' && pathname === '/donate') return createDonation(ctx)
   if (method === 'POST' && pathname === '/me') return saveProfile(ctx)
   if (method === 'DELETE' && pathname === '/me') return deleteAccount(ctx)
@@ -1154,6 +1447,9 @@ async function route(ctx: Ctx): Promise<Response> {
 
   const partyClose = pathname.match(/^\/parties\/([A-Za-z0-9-]{36})\/close$/)
   if (method === 'POST' && partyClose) return closeParty(ctx, partyClose[1])
+
+  const partySummon = pathname.match(/^\/parties\/([A-Za-z0-9-]{36})\/summon$/)
+  if (method === 'POST' && partySummon) return summonFriends(ctx, partySummon[1])
 
   const partyLeave = pathname.match(/^\/parties\/([A-Za-z0-9-]{36})\/leave$/)
   if (method === 'POST' && partyLeave) return leaveParty(ctx, partyLeave[1])

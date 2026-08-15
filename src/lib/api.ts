@@ -358,3 +358,29 @@ export function forgetAvatar(tgId: number): void {
 export function createDonation(stars: number): Promise<{ link: string }> {
   return request('/donate', { method: 'POST', body: JSON.stringify({ stars }) })
 }
+
+/** Зовёт выбранных друзей на идущий вечер сообщением от бота */
+export function summonFriends(partyId: string, ids: number[]): Promise<{ sent: number }> {
+  return request(`/parties/${partyId}/summon`, { method: 'POST', body: JSON.stringify({ ids }) })
+}
+
+export interface InboxEntry {
+  id: string
+  ts: number
+  ml: number
+  style: string
+}
+
+/** Отметки, сделанные в переписке с ботом: дневник забирает их при открытии */
+export function fetchInbox(): Promise<{ entries: InboxEntry[] }> {
+  return request('/inbox')
+}
+
+export function ackInbox(ids: string[]): Promise<{ ok: boolean }> {
+  return request('/inbox/ack', { method: 'POST', body: JSON.stringify({ ids }) })
+}
+
+/** Последний выбор — по нему бот предлагает «ещё такое же» */
+export function saveLastChoice(ml: number, style: string): Promise<{ ok: boolean }> {
+  return request('/me/last', { method: 'POST', body: JSON.stringify({ ml, style }) })
+}

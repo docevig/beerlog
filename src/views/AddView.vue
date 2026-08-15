@@ -13,6 +13,7 @@ import { dayKey, todayKey } from '../lib/day'
 import { overflowRatio } from '../lib/foam'
 import { useEntries } from '../store/entries'
 import { useParty } from '../store/party'
+import { apiAvailable, saveLastChoice } from '../lib/api'
 
 const { entries, profile, add } = useEntries()
 const { active: activeParty, mirror } = useParty()
@@ -183,6 +184,12 @@ async function save() {
 
   // Если сейчас идёт вечеринка, та же отметка появляется и на общем столе
   void mirror(created)
+
+  /*
+    Тот же выбор запоминает сервер: дневник боту недоступен, а кнопка
+    «ещё такое же» в переписке должна предлагать именно последнее пиво.
+  */
+  if (apiAvailable()) void saveLastChoice(effectiveMl, style.value).catch(() => {})
 
   justSaved.value = `${styleTitle(style.value)} ${formatPortion(effectiveMl)}`
 

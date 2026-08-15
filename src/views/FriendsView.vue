@@ -158,6 +158,11 @@ const shownFriends = computed(() =>
 
 const hiddenCount = computed(() => foundFriends.value.length - shownFriends.value.length)
 
+/** Кого можно позвать на вечер — с теми же именами, что в списке компании */
+const summonList = computed(() =>
+  sortedFriends.value.map((f) => ({ tg_id: f.tg_id, name: displayName(f) })),
+)
+
 /**
  * Вне Telegram сервер недоступен по определению — подписи нет.
  * В режиме разработки показываем пример, чтобы экран можно было
@@ -510,7 +515,11 @@ function tasteHint(friend: FriendTotals): string {
       </button>
       <p class="fineprint">ссылка работает сутки — по ней зайдут все, кому её переслали</p>
 
-      <PartiesSection :me-id="myId" :class="{ first: activeParty }" />
+      <PartiesSection
+        :me-id="myId"
+        :friends="summonList"
+        :class="{ first: activeParty }"
+      />
     </template>
   </section>
 </template>

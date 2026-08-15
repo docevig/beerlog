@@ -12,7 +12,7 @@ import { useEntries } from './store/entries'
 import { useUi } from './store/ui'
 import { useParty } from './store/party'
 import { tg } from './lib/telegram'
-import { acceptInvite, apiAvailable } from './lib/api'
+import { acceptInvite, apiAvailable, fetchInbox, ackInbox } from './lib/api'
 
 type Tab = 'add' | 'history' | 'stats' | 'friends'
 
@@ -59,10 +59,13 @@ const ready = ref(false)
 const failure = ref('')
 const invited = ref('')
 
+/** Сколько отметок приехало из переписки с ботом — показываем строкой */
+const fromBot = ref(0)
+
 /** Сколько записей ждут сети, чтобы уехать в облако */
 const waiting = ref(0)
 
-const { load, entries: allEntries } = useEntries()
+const { load, entries: allEntries, importMany } = useEntries()
 const { focusDay } = useUi()
 const { refresh: refreshParty, catchUpActive } = useParty()
 
@@ -177,6 +180,28 @@ onMounted(async () => {
   }
 
   /*
+    Кружки, отмеченные в переписке с ботом. Дневник лежит в CloudStorage,
+    и бот писать в него не может — поэтому он складывает отметки на сервер,
+    а забираем их мы, при первом же открытии.
+  */
+  if (apiAvailable()) {
+    try {
+      const { entries: incoming } = await fetchInbox()
+
+      if (incoming.length > 0) {
+        await importMany(incoming.map((e) => ({ id: e.id, ts: e.ts, ml: e.ml, style: e.style })))
+        // Подтверждаем поимённо: за время разговора могла добавиться ещё одна
+        await ackInbox(incoming.map((e) => e.id))
+
+        fromBot.value = incoming.length
+        setTimeout(() => (fromBot.value = 0), 6000)
+      }
+    } catch {
+      // Не забрали сейчас — заберём при следующем открытии
+    }
+  }
+
+  /*
     Про идущий вечер надо знать с самого запуска. Раньше это выяснялось
     только при открытии вкладки компании, и кружка, записанная сразу после
     старта приложения, на общий стол не уезжала совсем.
@@ -224,6 +249,7 @@ onMounted(async () => {
     <p v-else-if="waiting > 0" class="warning">записано на телефоне · ждём сеть, чтобы синхронизировать</p>
     <p v-if="failure" class="warning">хранилище недоступно: {{ failure }}</p>
     <p v-if="invited" class="warning accent">{{ invited }}</p>
+    <p v-if="fromBot" class="warning accent">добавлено из бота: {{ fromBot }}</p>
 
     <div class="topbar">
       <button
