@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { Entry } from '../types'
-import { totalMl, totalAlcoholGrams, styleBreakdown, byDay, soberDaysCount, longestSoberStreak, distinctStyles, byMonth, yearsWithEntries } from './stats'
+import { totalMl, totalAlcoholGrams, styleBreakdown, byDay, soberDaysCount, longestSoberStreak, distinctStyles, byMonth, yearsWithEntries, byWeekday, favouriteHour } from './stats'
 
 /** Три отметки: две в пятницу вечером, одна ночью — она тоже пятничная */
 const entries: Entry[] = [
@@ -92,5 +92,30 @@ describe('yearsWithEntries', () => {
   it('перечисляет годы от свежего к старому без повторов', () => {
     const past: Entry[] = [{ id: 'p', ts: new Date(2024, 2, 1, 19, 0).getTime(), ml: 500, style: 'lager' }]
     expect(yearsWithEntries([...entries, ...past])).toEqual([2026, 2024])
+  })
+})
+
+describe('byWeekday', () => {
+  it('раскладывает по дням недели с понедельника', () => {
+    // 14 августа 2026 — пятница; ночная отметка 15-го относится к ней же
+    const week = byWeekday(entries)
+    expect(week).toHaveLength(7)
+    expect(week[4]).toEqual({ weekday: 4, portions: 3, ml: 1330 })
+    expect(week[5].portions).toBe(0)
+  })
+})
+
+describe('favouriteHour', () => {
+  it('находит самый частый час по настоящему времени', () => {
+    const evening: Entry[] = [
+      { id: 'a', ts: new Date(2026, 7, 14, 21, 10).getTime(), ml: 500, style: 'lager' },
+      { id: 'b', ts: new Date(2026, 7, 15, 21, 40).getTime(), ml: 500, style: 'lager' },
+      { id: 'c', ts: new Date(2026, 7, 16, 19, 5).getTime(), ml: 500, style: 'lager' },
+    ]
+    expect(favouriteHour(evening)).toBe(21)
+  })
+
+  it('на пустом дневнике не выдумывает час', () => {
+    expect(favouriteHour([])).toBeUndefined()
   })
 })

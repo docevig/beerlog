@@ -17,8 +17,11 @@ import {
   spending,
   byMonth,
   yearsWithEntries,
+  byWeekday,
+  favouriteHour,
 } from '../lib/stats'
 import YearBars from '../components/YearBars.vue'
+import WeekBars from '../components/WeekBars.vue'
 import { buildCatalog } from '../lib/catalog'
 import MyBeers from '../components/MyBeers.vue'
 import { achievements } from '../lib/achievements'
@@ -98,6 +101,25 @@ const money = computed(() => spending(monthEntries.value))
 
 // Главная цифра прокручивается от нуля — единственное место, где это уместно
 const monthLitres = useCountUp(() => totalMl(monthEntries.value) / 1000)
+
+/**
+ * Когда пьётся чаще — по всей истории, а не за период: недельный ритм
+ * складывается месяцами, и на коротком отрезке любой всплеск случаен.
+ */
+const weekPoints = computed(() => byWeekday(entries.value))
+const bestHour = computed(() => favouriteHour(entries.value))
+
+const WEEKDAY_NAMES = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье']
+
+/** Строка под столбиками: сначала день, потом час — так её и читают вслух */
+const rhythm = computed(() => {
+  const top = [...weekPoints.value].sort((a, b) => b.ml - a.ml)[0]
+  if (!top || top.ml === 0) return ''
+
+  const day = WEEKDAY_NAMES[top.weekday]
+  const hour = bestHour.value
+  return hour === undefined ? `чаще всего — ${day}` : `чаще всего — ${day}, около ${hour}:00`
+})
 
 /** Что показываем: разобранный месяц или год целиком */
 const period = ref<'month' | 'year'>('month')
@@ -333,6 +355,12 @@ async function shareMonth() {
         </div>
       </div>
       </template>
+
+      <div v-if="rhythm" class="block">
+        <div class="eyebrow">когда ты пьёшь</div>
+        <WeekBars :points="weekPoints" />
+        <div class="hint">{{ rhythm }} · по всей истории</div>
+      </div>
 
       <div class="block">
         <MyBeers :entries="entries" />

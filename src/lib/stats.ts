@@ -149,6 +149,54 @@ export function byMonth(entries: Entry[], year: number): MonthPoint[] {
   return points
 }
 
+export interface WeekPoint {
+  /** 0 — понедельник, 6 — воскресенье: неделя у нас начинается с понедельника */
+  weekday: number
+  portions: number
+  ml: number
+}
+
+/**
+ * Разрез по дням недели. День берётся с границей в 6 утра: кружка в час ночи
+ * относится к пятничному вечеру, а не к субботнему утру, — иначе все ночные
+ * посиделки перекочевали бы в выходные и картина получилась бы ложной.
+ */
+export function byWeekday(entries: Entry[]): WeekPoint[] {
+  const points: WeekPoint[] = Array.from({ length: 7 }, (_, i) => ({
+    weekday: i,
+    portions: 0,
+    ml: 0,
+  }))
+
+  for (const e of entries) {
+    const [y, m, d] = dayKey(e.ts).split('-').map(Number)
+    // getDay() считает от воскресенья, а нам привычнее с понедельника
+    const index = (new Date(y, m - 1, d).getDay() + 6) % 7
+
+    points[index].portions += 1
+    points[index].ml += e.ml
+  }
+
+  return points
+}
+
+/**
+ * Час, на который приходится больше всего отметок. Здесь берётся настоящее
+ * время суток, а не смещённое: вопрос «во сколько ты обычно берёшь первую»
+ * подразумевает часы на циферблате.
+ */
+export function favouriteHour(entries: Entry[]): number | undefined {
+  if (entries.length === 0) return undefined
+
+  const hours = new Array<number>(24).fill(0)
+  for (const e of entries) hours[new Date(e.ts).getHours()] += 1
+
+  let best = 0
+  for (let h = 1; h < 24; h++) if (hours[h] > hours[best]) best = h
+
+  return hours[best] > 0 ? best : undefined
+}
+
 /** Годы, в которых есть хоть одна отметка, от свежего к старому */
 export function yearsWithEntries(entries: Entry[]): number[] {
   const years = new Set<number>()
