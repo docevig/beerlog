@@ -296,7 +296,7 @@ onMounted(load)
 
     <!-- Зов через бота: приглашение доходит само, пересылать ссылку не нужно -->
     <template v-if="state && state.party.ended_at === null && (friends?.length ?? 0) > 0">
-      <button v-if="!summoning" type="button" class="link" @click="summoning = true">
+      <button v-if="!summoning" type="button" class="summon-open" @click="summoning = true">
         позвать друзей
       </button>
 
@@ -311,10 +311,10 @@ onMounted(load)
         </label>
 
         <div class="summon-actions">
-          <button type="button" class="ghost" :disabled="busy || chosen.length === 0" @click="summon">
+          <button type="button" class="summon-go" :disabled="busy || chosen.length === 0" @click="summon">
             позвать ({{ chosen.length }})
           </button>
-          <button type="button" class="link" @click="summoning = false">отмена</button>
+          <button type="button" class="summon-cancel" @click="summoning = false">отмена</button>
         </div>
       </div>
     </template>
@@ -386,6 +386,48 @@ onMounted(load)
 </template>
 
 <style scoped>
+/* Кнопки зова: те же две роли, что и везде — главное действие и отказ */
+.summon-go {
+  padding: 9px 16px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--accent-bright);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+.summon-go:disabled {
+  border-color: var(--line);
+  color: var(--text-faint);
+  cursor: default;
+}
+.summon-open {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-bright);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.summon-cancel {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+/* Системный чекбокс синий на любой теме — перекрашиваем в янтарь */
+.pick input {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--accent);
+}
 .summon {
   display: flex;
   flex-direction: column;
